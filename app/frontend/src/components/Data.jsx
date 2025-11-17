@@ -282,8 +282,10 @@ function Data() {
                 <Grid item xs={12} md={6}>
                   <Paper variant="outlined" sx={{ p: 2 }}>
                     <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
-                      {configStatus?.azure?.configured ? (
+                      {azureTestResult?.success ? (
                         <CheckCircleIcon color="success" />
+                      ) : configStatus?.azure?.configured ? (
+                        <ErrorIcon color="warning" />
                       ) : (
                         <ErrorIcon color="error" />
                       )}
@@ -291,9 +293,21 @@ function Data() {
                         Azure AD
                       </Typography>
                       <Chip
-                        label={configStatus?.azure?.configured ? 'Configured' : 'Not Configured'}
+                        label={
+                          azureTestResult?.success
+                            ? 'Connected'
+                            : configStatus?.azure?.configured
+                            ? 'Configured'
+                            : 'Not Configured'
+                        }
                         size="small"
-                        color={configStatus?.azure?.configured ? 'success' : 'error'}
+                        color={
+                          azureTestResult?.success
+                            ? 'success'
+                            : configStatus?.azure?.configured
+                            ? 'warning'
+                            : 'error'
+                        }
                       />
                     </Stack>
                     {configStatus?.azure?.configured && (
@@ -328,8 +342,10 @@ function Data() {
                 <Grid item xs={12} md={6}>
                   <Paper variant="outlined" sx={{ p: 2 }}>
                     <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
-                      {configStatus?.odoo?.configured ? (
+                      {odooTestResult?.success ? (
                         <CheckCircleIcon color="success" />
+                      ) : configStatus?.odoo?.configured ? (
+                        <ErrorIcon color="warning" />
                       ) : (
                         <ErrorIcon color="error" />
                       )}
@@ -337,9 +353,21 @@ function Data() {
                         Odoo Database
                       </Typography>
                       <Chip
-                        label={configStatus?.odoo?.configured ? 'Configured' : 'Not Configured'}
+                        label={
+                          odooTestResult?.success
+                            ? 'Connected'
+                            : configStatus?.odoo?.configured
+                            ? 'Configured'
+                            : 'Not Configured'
+                        }
                         size="small"
-                        color={configStatus?.odoo?.configured ? 'success' : 'error'}
+                        color={
+                          odooTestResult?.success
+                            ? 'success'
+                            : configStatus?.odoo?.configured
+                            ? 'warning'
+                            : 'error'
+                        }
                       />
                     </Stack>
 
@@ -355,22 +383,17 @@ function Data() {
                         disabled={switchingEnv}
                       >
                         <ToggleButton value="PREPROD" color="info">
-                          {configStatus?.odoo?.has_preprod ? (
-                            <CheckCircleIcon sx={{ mr: 0.5, fontSize: 16 }} color="success" />
-                          ) : (
-                            <ErrorIcon sx={{ mr: 0.5, fontSize: 16 }} color="error" />
-                          )}
                           Pre-Production
                         </ToggleButton>
                         <ToggleButton value="PROD" color="warning">
-                          {configStatus?.odoo?.has_prod ? (
-                            <CheckCircleIcon sx={{ mr: 0.5, fontSize: 16 }} color="success" />
-                          ) : (
-                            <ErrorIcon sx={{ mr: 0.5, fontSize: 16 }} color="error" />
-                          )}
                           Production
                         </ToggleButton>
                       </ToggleButtonGroup>
+                      <Typography variant="caption" color="textSecondary" sx={{ mt: 0.5, display: 'block' }}>
+                        {configStatus?.odoo?.has_preprod ? '✓ PREPROD configured' : '✗ PREPROD not configured'}
+                        {' | '}
+                        {configStatus?.odoo?.has_prod ? '✓ PROD configured' : '✗ PROD not configured'}
+                      </Typography>
                     </Box>
 
                     <Button

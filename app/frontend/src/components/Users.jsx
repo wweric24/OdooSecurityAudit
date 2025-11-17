@@ -15,7 +15,13 @@ import {
   Alert,
   Chip,
   Stack,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Button,
 } from '@mui/material'
+import { Clear as ClearIcon } from '@mui/icons-material'
 import { api } from '../api/client'
 
 const panelStyle = {
@@ -31,25 +37,52 @@ function Users() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
+  const [departments, setDepartments] = useState([])
+  const [selectedDepartment, setSelectedDepartment] = useState('')
+
+  useEffect(() => {
+    loadDepartments()
+  }, [])
 
   useEffect(() => {
     loadUsers()
-  }, [search])
+  }, [search, selectedDepartment])
+
+  const loadDepartments = async () => {
+    try {
+      const response = await api.getDepartments()
+      setDepartments(response.data.departments || [])
+    } catch (err) {
+      console.warn('Unable to load departments', err)
+    }
+  }
 
   const loadUsers = async () => {
     try {
       setLoading(true)
-      const params = {}
-      if (search) params.search = search
 
-      const response = await api.getUsers(params)
-      setUsers(response.data.users)
+      if (selectedDepartment) {
+        // Use department-specific endpoint
+        const response = await api.getUsersByDepartment(selectedDepartment)
+        setUsers(response.data.users)
+      } else {
+        // Use general users endpoint
+        const params = {}
+        if (search) params.search = search
+        const response = await api.getUsers(params)
+        setUsers(response.data.users)
+      }
       setError(null)
     } catch (err) {
       setError(err.message)
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleClearFilters = () => {
+    setSearch('')
+    setSelectedDepartment('')
   }
 
   if (loading && users.length === 0) {
@@ -73,14 +106,46 @@ function Users() {
       </Stack>
 
       <Box sx={panelStyle}>
-        <TextField
-          label="Search Users"
-          variant="outlined"
-          fullWidth
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          sx={{ mb: 3, maxWidth: 400 }}
-        />
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 3 }}>
+          <TextField
+            label="Search Users"
+            variant="outlined"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            sx={{ minWidth: 250 }}
+            disabled={!!selectedDepartment}
+          />
+          <FormControl sx={{ minWidth: 200 }}>
+            <InputLabel>Department</InputLabel>
+            <Select
+              value={selectedDepartment}
+              label="Department"
+              onChange={(e) => setSelectedDepartment(e.target.value)}
+            >
+              <MenuItem value="">All Departments</MenuItem>
+              {departments.map((dept) => (
+                <MenuItem key={dept} value={dept}>
+                  {dept}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          {(search || selectedDepartment) && (
+            <Button
+              variant="outlined"
+              startIcon={<ClearIcon />}
+              onClick={handleClearFilters}
+            >
+              Clear Filters
+            </Button>
+          )}
+        </Stack>
+
+        {selectedDepartment && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            Showing {users.length} users in <strong>{selectedDepartment}</strong> department
+          </Alert>
+        )}
 
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>

@@ -113,6 +113,39 @@ export const api = {
   switchOdooEnvironment: (environment) => {
     return client.post(`/api/config/switch-environment?environment=${environment}`)
   },
+
+  // Comparison (Azure vs Odoo)
+  runComparison: () => {
+    return client.post('/api/comparison/run')
+  },
+
+  getComparisonSummary: () => {
+    return client.get('/api/comparison/summary')
+  },
+
+  getComparisonResults: (discrepancyType = null) => {
+    const params = discrepancyType ? { discrepancy_type: discrepancyType } : {}
+    return client.get('/api/comparison/results', { params })
+  },
+
+  resolveDiscrepancy: (resultId, notes = null) => {
+    const params = notes ? { notes } : {}
+    return client.post(`/api/comparison/resolve/${resultId}`, null, { params })
+  },
+
+  // CRUD Permissions
+  getGroupPermissions: (groupId) => {
+    return client.get(`/api/groups/${groupId}/permissions`)
+  },
+
+  // Department filtering
+  getDepartments: () => {
+    return client.get('/api/departments')
+  },
+
+  getUsersByDepartment: (department) => {
+    return client.get('/api/users/by-department', { params: { department } })
+  },
 }
 
 export default client

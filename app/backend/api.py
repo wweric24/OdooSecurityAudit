@@ -18,12 +18,22 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
+
 from app.backend.database import get_db, init_db
 from app.backend.settings import settings
 from app.backend.services.azure_sync import sync_azure_users
 from app.backend.services.odoo_sync import sync_odoo_postgres
 from app.backend.services.sync_runs import list_recent_syncs, serialize_sync_run
-from app.data.models import SecurityGroup, User, ImportHistory, user_group_association
+from app.backend.services.comparison_service import (
+    run_user_comparison,
+    get_comparison_results,
+    get_comparison_summary,
+    mark_discrepancy_resolved,
+)
+from app.data.models import SecurityGroup, User, ImportHistory, user_group_association, AccessRight, ComparisonResult
 from app.data.csv_parser import CSVParser
 
 app = FastAPI(
@@ -907,5 +917,138 @@ async def switch_odoo_environment(environment: str = Query(..., regex="^(PREPROD
         "previous_environment": old_env,
         "current_environment": environment,
         "note": "This change is temporary. Update ODOO_ENVIRONMENT in .env to persist."
+    }
+
+
+# =============================================
+# COMPARISON ENDPOINTS
+# =============================================
+
+@app.post("/api/comparison/run")
+async def run_comparison(db: Session = Depends(get_db)):
+    """Run Azure vs Odoo user comparison."""
+    try:
+        stats = run_user_comparison(db)
+        return {"status": "completed", "stats": stats}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/comparison/summary")
+async def get_comparison_summary_endpoint(db: Session = Depends(get_db)):
+    """Get summary of latest comparison."""
+    return get_comparison_summary(db)
+
+
+@app.get("/api/comparison/results")
+async def get_comparison_results_endpoint(
+    discrepancy_type: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Get detailed comparison results."""
+    results = get_comparison_results(db, discrepancy_type)
+    return {"results": results, "count": len(results)}
+
+
+@app.post("/api/comparison/resolve/{result_id}")
+async def resolve_discrepancy(
+    result_id: int,
+    notes: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Mark a discrepancy as resolved."""
+    success = mark_discrepancy_resolved(db, result_id, notes)
+    if not success:
+        raise HTTPException(status_code=404, detail="Comparison result not found")
+    return {"success": True, "message": "Discrepancy marked as resolved"}
+
+
+# =============================================
+# CRUD PERMISSIONS ENDPOINTS
+# =============================================
+
+@app.get("/api/groups/{group_id}/permissions")
+async def get_group_permissions(
+    group_id: int,
+    db: Session = Depends(get_db),
+):
+    """Get CRUD permissions for a specific group."""
+    group = db.query(SecurityGroup).filter(SecurityGroup.id == group_id).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    permissions = (
+        db.query(AccessRight)
+        .filter(AccessRight.group_id == group_id)
+        .order_by(AccessRight.model_name)
+        .all()
+    )
+
+    return {
+        "group_id": group_id,
+        "group_name": group.name,
+        "permissions": [
+            {
+                "id": p.id,
+                "model_name": p.model_name,
+                "model_description": p.model_description,
+                "perm_read": p.perm_read,
+                "perm_write": p.perm_write,
+                "perm_create": p.perm_create,
+                "perm_unlink": p.perm_unlink,
+                "synced_at": p.synced_at.isoformat() if p.synced_at else None,
+            }
+            for p in permissions
+        ],
+        "total_permissions": len(permissions),
+    }
+
+
+# =============================================
+# DEPARTMENT FILTERING
+# =============================================
+
+@app.get("/api/departments")
+async def get_departments(db: Session = Depends(get_db)):
+    """Get list of unique departments."""
+    departments = (
+        db.query(User.department)
+        .filter(User.department.isnot(None), User.department != "")
+        .distinct()
+        .order_by(User.department)
+        .all()
+    )
+    return {"departments": [d[0] for d in departments]}
+
+
+@app.get("/api/users/by-department")
+async def get_users_by_department(
+    department: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+):
+    """Get users filtered by department with their group assignments."""
+    users = (
+        db.query(User)
+        .filter(User.department == department)
+        .options(joinedload(User.groups))
+        .order_by(User.name)
+        .all()
+    )
+
+    return {
+        "department": department,
+        "users": [
+            {
+                "id": u.id,
+                "name": u.name,
+                "email": u.email,
+                "azure_id": u.azure_id,
+                "odoo_user_id": u.odoo_user_id,
+                "group_count": len(u.groups),
+                "groups": [{"id": g.id, "name": g.name, "module": g.module} for g in u.groups],
+            }
+            for u in users
+        ],
+        "total_users": len(users),
     }
 

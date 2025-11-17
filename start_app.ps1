@@ -18,12 +18,12 @@ function Get-PortProcesses {
 function Stop-PortProcesses {
     param([int]$Port)
     $pids = Get-PortProcesses -Port $Port
-    foreach ($pid in $pids) {
+    foreach ($processId in $pids) {
         try {
-            Write-Host "Stopping process $pid listening on port $Port..." -ForegroundColor Yellow
-            Stop-Process -Id $pid -Force -ErrorAction Stop
+            Write-Host "Stopping process $processId listening on port $Port..." -ForegroundColor Yellow
+            Stop-Process -Id $processId -Force -ErrorAction Stop
         } catch {
-            Write-Warning ("Failed to stop process {0}: {1}" -f $pid, $_)
+            Write-Warning ("Failed to stop process {0}: {1}" -f $processId, $_)
         }
     }
 }
@@ -56,7 +56,7 @@ Write-Host "Ensuring no processes are listening on frontend port $FrontendPort..
 Stop-PortProcesses -Port $FrontendPort
 
 Write-Host "Starting backend (FastAPI) on port $BackendPort..." -ForegroundColor Cyan
-$backendCommand = "Set-Location '$backendDir'; python -m uvicorn app.backend.api:app --host 0.0.0.0 --port $BackendPort --reload"
+$backendCommand = "Set-Location '$repoRoot'; python -m uvicorn app.backend.api:app --host 0.0.0.0 --port $BackendPort --reload"
 $backendProcess = Start-Process -FilePath "pwsh" -ArgumentList "-NoExit", "-Command", $backendCommand -PassThru
 
 if (Wait-ForPort -Port $BackendPort -TimeoutSeconds 90) {

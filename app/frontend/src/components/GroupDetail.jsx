@@ -28,7 +28,12 @@ import {
   MenuItem,
   Stack,
 } from '@mui/material'
-import { ArrowBack as ArrowBackIcon, ExpandMore as ExpandMoreIcon } from '@mui/icons-material'
+import {
+  ArrowBack as ArrowBackIcon,
+  ExpandMore as ExpandMoreIcon,
+  Check as CheckIcon,
+  Close as CloseIcon,
+} from '@mui/icons-material'
 import { api } from '../api/client'
 
 const panelStyle = {
@@ -54,10 +59,18 @@ function GroupDetail() {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
   const [successMessage, setSuccessMessage] = useState(null)
+  const [permissions, setPermissions] = useState([])
+  const [loadingPermissions, setLoadingPermissions] = useState(false)
 
   useEffect(() => {
     loadGroup()
   }, [id])
+
+  useEffect(() => {
+    if (group) {
+      loadPermissions()
+    }
+  }, [group])
 
   const loadGroup = async () => {
     try {
@@ -76,6 +89,18 @@ function GroupDetail() {
       setError(err.message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadPermissions = async () => {
+    try {
+      setLoadingPermissions(true)
+      const response = await api.getGroupPermissions(id)
+      setPermissions(response.data.permissions || [])
+    } catch (err) {
+      console.warn('Unable to load permissions', err)
+    } finally {
+      setLoadingPermissions(false)
     }
   }
 
@@ -455,6 +480,105 @@ function GroupDetail() {
               </Grid>
             </CardContent>
           </Card>
+        </Grid>
+
+        {/* CRUD Permissions Section */}
+        <Grid item xs={12}>
+          <Accordion defaultExpanded={permissions.length > 0}>
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+              <Typography variant="h6">
+                Access Rights (CRUD Permissions)
+                {permissions.length > 0 && (
+                  <Chip
+                    label={permissions.length}
+                    size="small"
+                    color="primary"
+                    sx={{ ml: 1 }}
+                  />
+                )}
+              </Typography>
+            </AccordionSummary>
+            <AccordionDetails>
+              {loadingPermissions ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+                  <CircularProgress size={24} />
+                </Box>
+              ) : permissions.length > 0 ? (
+                <Box>
+                  <Alert severity="info" sx={{ mb: 2 }}>
+                    This group provides access to {permissions.length} model(s). CRUD permissions
+                    show what operations users with this group can perform.
+                  </Alert>
+                  <TableContainer component={Paper} variant="outlined">
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Model</TableCell>
+                          <TableCell>Description</TableCell>
+                          <TableCell align="center">Create</TableCell>
+                          <TableCell align="center">Read</TableCell>
+                          <TableCell align="center">Update</TableCell>
+                          <TableCell align="center">Delete</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {permissions.map((perm) => (
+                          <TableRow key={perm.id}>
+                            <TableCell>
+                              <Typography
+                                variant="body2"
+                                sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}
+                              >
+                                {perm.model_name}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2" color="textSecondary">
+                                {perm.model_description || '-'}
+                              </Typography>
+                            </TableCell>
+                            <TableCell align="center">
+                              {perm.perm_create ? (
+                                <CheckIcon color="success" fontSize="small" />
+                              ) : (
+                                <CloseIcon color="disabled" fontSize="small" />
+                              )}
+                            </TableCell>
+                            <TableCell align="center">
+                              {perm.perm_read ? (
+                                <CheckIcon color="success" fontSize="small" />
+                              ) : (
+                                <CloseIcon color="disabled" fontSize="small" />
+                              )}
+                            </TableCell>
+                            <TableCell align="center">
+                              {perm.perm_write ? (
+                                <CheckIcon color="success" fontSize="small" />
+                              ) : (
+                                <CloseIcon color="disabled" fontSize="small" />
+                              )}
+                            </TableCell>
+                            <TableCell align="center">
+                              {perm.perm_unlink ? (
+                                <CheckIcon color="success" fontSize="small" />
+                              ) : (
+                                <CloseIcon color="disabled" fontSize="small" />
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </Box>
+              ) : (
+                <Alert severity="warning">
+                  No CRUD permissions found for this group. This data is populated when you sync
+                  from Odoo PostgreSQL database (requires access to ir.model.access table).
+                </Alert>
+              )}
+            </AccordionDetails>
+          </Accordion>
         </Grid>
       </Grid>
       </Box>

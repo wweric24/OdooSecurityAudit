@@ -18,6 +18,7 @@ import GroupDetail from './components/GroupDetail'
 import Users from './components/Users'
 import Analysis from './components/Analysis'
 import Data from './components/Data'
+import Comparison from './components/Comparison'
 
 const theme = createTheme({
   palette: {
@@ -37,6 +38,7 @@ const tabs = [
   { label: 'Dashboard', path: '/' },
   { label: 'Groups', path: '/groups' },
   { label: 'Users', path: '/users' },
+  { label: 'Comparison', path: '/comparison' },
   { label: 'Analysis', path: '/analysis' },
   { label: 'Data', path: '/data' },
 ]
@@ -80,6 +82,7 @@ function AppLayout() {
           <Route path="/groups" element={<Groups />} />
           <Route path="/groups/:id" element={<GroupDetail />} />
           <Route path="/users" element={<Users />} />
+          <Route path="/comparison" element={<Comparison />} />
           <Route path="/analysis" element={<Analysis />} />
           <Route path="/data" element={<Data />} />
           <Route path="/import" element={<Data />} />

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.backend.services.sync_runs import create_sync_run, complete_sync_run
 from app.backend.settings import settings
 from app.data.csv_parser import CSVParser
-from app.data.models import SecurityGroup, User
+from app.data.models import SecurityGroup, User, AccessRight
 
 parser = CSVParser()
 
@@ -62,11 +62,48 @@ def _fetch_from_postgres() -> Dict:
             cur.execute("SELECT parent_id, child_id FROM res_groups_implied_rel")
             inheritance = [{"parent_id": row[0], "child_id": row[1]} for row in cur.fetchall()]
 
+            # Fetch CRUD permissions (access rights)
+            # This query joins ir_model_access with ir_model to get human-readable model names
+            access_rights = []
+            try:
+                cur.execute("""
+                    SELECT
+                        ira.id,
+                        ira.group_id,
+                        im.model,
+                        im.name as model_name,
+                        ira.perm_read,
+                        ira.perm_write,
+                        ira.perm_create,
+                        ira.perm_unlink
+                    FROM ir_model_access ira
+                    JOIN ir_model im ON ira.model_id = im.id
+                    WHERE ira.group_id IS NOT NULL
+                    ORDER BY ira.group_id, im.model
+                """)
+                access_rights = [
+                    {
+                        "id": row[0],
+                        "group_id": row[1],
+                        "model": row[2],
+                        "model_name": row[3],
+                        "perm_read": row[4],
+                        "perm_write": row[5],
+                        "perm_create": row[6],
+                        "perm_unlink": row[7],
+                    }
+                    for row in cur.fetchall()
+                ]
+            except Exception:
+                # If ir_model_access table is not accessible, continue without it
+                pass
+
     return {
         "groups": groups,
         "users": users,
         "memberships": memberships,
         "inheritance": inheritance,
+        "access_rights": access_rights,
     }
 
 
@@ -156,6 +193,48 @@ def _upsert_groups(db: Session, payload: Dict) -> Dict[str, int]:
             child.parent_groups.append(parent)
     db.commit()
 
+    # Access rights (CRUD permissions)
+    access_rights_created = 0
+    for ar_record in payload.get("access_rights", []):
+        odoo_group_id = ar_record.get("group_id")
+        group = group_lookup.get(odoo_group_id)
+        if not group:
+            continue
+
+        # Check if this access right already exists
+        existing = (
+            db.query(AccessRight)
+            .filter(
+                AccessRight.group_id == group.id,
+                AccessRight.odoo_access_id == ar_record.get("id"),
+            )
+            .first()
+        )
+
+        if not existing:
+            access_right = AccessRight(
+                group_id=group.id,
+                odoo_access_id=ar_record.get("id"),
+                model_name=ar_record.get("model"),
+                model_description=ar_record.get("model_name"),
+                perm_read=ar_record.get("perm_read", False),
+                perm_write=ar_record.get("perm_write", False),
+                perm_create=ar_record.get("perm_create", False),
+                perm_unlink=ar_record.get("perm_unlink", False),
+                synced_at=now,
+            )
+            db.add(access_right)
+            access_rights_created += 1
+        else:
+            # Update existing
+            existing.perm_read = ar_record.get("perm_read", False)
+            existing.perm_write = ar_record.get("perm_write", False)
+            existing.perm_create = ar_record.get("perm_create", False)
+            existing.perm_unlink = ar_record.get("perm_unlink", False)
+            existing.synced_at = now
+
+    db.commit()
+
     return {
         "groups_processed": len(payload.get("groups", [])),
         "users_processed": len(payload.get("users", [])),
@@ -163,6 +242,8 @@ def _upsert_groups(db: Session, payload: Dict) -> Dict[str, int]:
         "groups_updated": groups_updated,
         "users_created": users_created,
         "users_updated": users_updated,
+        "access_rights_synced": len(payload.get("access_rights", [])),
+        "access_rights_created": access_rights_created,
     }
 
 

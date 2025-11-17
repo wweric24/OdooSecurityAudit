@@ -10,6 +10,13 @@ import {
 } from '@mui/material'
 import { api } from '../api/client'
 
+const panelStyle = {
+  backgroundColor: '#fff',
+  borderRadius: 3,
+  p: { xs: 2, md: 3 },
+  boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)',
+}
+
 function Dashboard() {
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -72,7 +79,8 @@ function Dashboard() {
         Dashboard
       </Typography>
 
-      <Grid container spacing={3} sx={{ mt: 1 }}>
+      <Box sx={panelStyle}>
+        <Grid container spacing={3}>
         <Grid item xs={12} sm={6} md={3}>
           <StatCard
             title="Total Groups"
@@ -140,7 +148,8 @@ function Dashboard() {
             </CardContent>
           </Card>
         </Grid>
-      </Grid>
+        </Grid>
+      </Box>
     </Box>
   )
 }

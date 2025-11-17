@@ -1,6 +1,8 @@
 import axios from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL ||
+  (window?.location?.hostname ? `http://${window.location.hostname}:3200` : 'http://localhost:3200')
 
 const client = axios.create({
   baseURL: API_BASE_URL,
@@ -75,6 +77,19 @@ export const api = {
     return client.get('/api/export/analysis/non-compliant', {
       responseType: 'blob',
     })
+  },
+
+  // Sync operations
+  syncAzureUsers: () => {
+    return client.post('/api/sync/azure-users')
+  },
+
+  syncOdooDatabase: () => {
+    return client.post('/api/sync/odoo-db')
+  },
+
+  getSyncStatus: (params = {}) => {
+    return client.get('/api/sync/status', { params })
   },
 
   // Statistics

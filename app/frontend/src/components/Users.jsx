@@ -14,10 +14,16 @@ import {
   CircularProgress,
   Alert,
   Chip,
-  Button,
   Stack,
 } from '@mui/material'
 import { api } from '../api/client'
+
+const panelStyle = {
+  backgroundColor: '#fff',
+  borderRadius: 3,
+  p: { xs: 2, md: 3 },
+  boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)',
+}
 
 function Users() {
   const navigate = useNavigate()
@@ -25,8 +31,6 @@ function Users() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
-  const [exporting, setExporting] = useState(false)
-  const [exportError, setExportError] = useState(null)
 
   useEffect(() => {
     loadUsers()
@@ -48,36 +52,6 @@ function Users() {
     }
   }
 
-  const downloadBlob = (blob, filename) => {
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.setAttribute('download', filename)
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    window.URL.revokeObjectURL(url)
-  }
-
-  const handleExport = async () => {
-    try {
-      setExporting(true)
-      setExportError(null)
-      const params = {}
-      if (search) params.search = search
-      const response = await api.exportUsers(params)
-      const blob =
-        response.data instanceof Blob
-          ? response.data
-          : new Blob([response.data], { type: 'text/csv' })
-      downloadBlob(blob, 'users_export.csv')
-    } catch (err) {
-      setExportError(err.message || 'Failed to export users')
-    } finally {
-      setExporting(false)
-    }
-  }
-
   if (loading && users.length === 0) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
@@ -96,32 +70,24 @@ function Users() {
         sx={{ mb: 2 }}
       >
         <Typography variant="h4">Users</Typography>
-        <Button variant="contained" onClick={handleExport} disabled={exporting}>
-          {exporting ? 'Exporting...' : 'Export CSV'}
-        </Button>
       </Stack>
 
-      <TextField
-        label="Search Users"
-        variant="outlined"
-        fullWidth
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        sx={{ mb: 3, maxWidth: 400 }}
-      />
+      <Box sx={panelStyle}>
+        <TextField
+          label="Search Users"
+          variant="outlined"
+          fullWidth
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          sx={{ mb: 3, maxWidth: 400 }}
+        />
 
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
-      {exportError && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {exportError}
-        </Alert>
-      )}
-
-      <TableContainer component={Paper}>
+        {error && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {error}
+          </Alert>
+        )}
+        <TableContainer component={Paper}>
         <Table>
           <TableHead>
             <TableRow>
@@ -166,7 +132,8 @@ function Users() {
             ))}
           </TableBody>
         </Table>
-      </TableContainer>
+        </TableContainer>
+      </Box>
     </Box>
   )
 }

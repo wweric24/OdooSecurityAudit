@@ -4,11 +4,13 @@ import os
 import sys
 import tempfile
 import csv
+from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from fastapi.testclient import TestClient
 from app.backend.api import app
 from app.backend.database import init_db, get_db, engine
+from app.backend.settings import settings
 from app.data.models import Base
 
 
@@ -21,6 +23,10 @@ class TestAPI(unittest.TestCase):
         # Use in-memory database for tests
         Base.metadata.create_all(bind=engine)
         init_db()
+        sample_dir = Path(__file__).resolve().parents[1] / "sample_data"
+        settings.azure_user_sync_mock_file = str(sample_dir / "azure_users_sample.json")
+        settings.odoo_sync_mock_file = str(sample_dir / "odoo_sync_sample.json")
+        settings.allow_mock_syncs = True
     
     @classmethod
     def tearDownClass(cls):
@@ -204,6 +210,32 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         header = response.text.splitlines()[0]
         self.assertEqual(header, "ID,Name,Module,Issues")
+
+    def test_sync_azure_users_with_mock(self):
+        """Azure sync endpoint should process mock payload."""
+        response = self.client.post("/api/sync/azure-users")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("stats", data)
+        self.assertGreater(data["stats"]["processed"], 0)
+
+    def test_sync_odoo_db_with_mock(self):
+        """Odoo sync endpoint should process mock payload."""
+        response = self.client.post("/api/sync/odoo-db")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("stats", data)
+        self.assertGreater(data["stats"]["groups_processed"], 0)
+
+    def test_sync_status_endpoint(self):
+        """Sync status endpoint returns recent runs."""
+        # ensure at least one run
+        self.client.post("/api/sync/azure-users")
+        response = self.client.get("/api/sync/status")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("runs", payload)
+        self.assertGreater(len(payload["runs"]), 0)
 
 
 if __name__ == '__main__':

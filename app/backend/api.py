@@ -13,12 +13,16 @@ import csv
 import io
 import os
 import tempfile
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from app.backend.database import get_db, init_db
+from app.backend.settings import settings
+from app.backend.services.azure_sync import sync_azure_users
+from app.backend.services.odoo_sync import sync_odoo_postgres
+from app.backend.services.sync_runs import list_recent_syncs, serialize_sync_run
 from app.data.models import SecurityGroup, User, ImportHistory, user_group_association
 from app.data.csv_parser import CSVParser
 
@@ -108,6 +112,9 @@ def serialize_group(group: SecurityGroup) -> dict:
         "is_documented": group.is_documented,
         "is_overdue_audit": group.is_overdue_audit,
         "is_archived": group.is_archived,
+        "source_system": group.source_system,
+        "odoo_id": group.odoo_id,
+        "synced_from_postgres_at": group.synced_from_postgres_at.isoformat() if group.synced_from_postgres_at else None,
         "category": group.category,
         "notes": group.notes,
         "users": [{"id": u.id, "name": u.name, "department": u.department} for u in group.users],
@@ -154,7 +161,7 @@ async def import_csv(
         
         # Create import history record
         import_history = ImportHistory(
-            import_date=datetime.utcnow(),
+            import_date=datetime.now(timezone.utc),
             filename=file.filename,
             total_groups=len(groups_data),
             total_users=len(set(user for group in groups_data for user in group.get('users', []))),
@@ -372,6 +379,8 @@ async def get_groups(
                 "follows_naming_convention": g.follows_naming_convention,
                 "has_required_fields": g.has_required_fields,
                 "is_archived": g.is_archived,
+                "source_system": g.source_system,
+                "synced_from_postgres_at": g.synced_from_postgres_at.isoformat() if g.synced_from_postgres_at else None,
                 "parent_groups": [{"id": p.id, "name": p.name} for p in g.parent_groups],
                 "user_count": len(g.users),
                 "last_audit_date": g.last_audit_date.isoformat() if g.last_audit_date else None
@@ -476,6 +485,10 @@ async def get_users(
                 "name": u.name,
                 "email": u.email,
                 "department": u.department,
+                "source_system": u.source_system,
+                "azure_id": u.azure_id,
+                "odoo_user_id": u.odoo_user_id,
+                "last_seen_in_azure_at": u.last_seen_in_azure_at.isoformat() if u.last_seen_in_azure_at else None,
                 "group_count": len(u.groups),
                 "groups": [{"id": g.id, "name": g.name} for g in u.groups]
             }
@@ -658,11 +671,26 @@ async def export_users_csv(
             user.name,
             user.email or "",
             user.department or "",
+            user.source_system or "",
+            user.azure_id or "",
+            user.odoo_user_id or "",
+            user.last_seen_in_azure_at.isoformat() if user.last_seen_in_azure_at else "",
             len(group_names),
             "; ".join(group_names)
         ])
     
-    headers = ["ID", "Name", "Email", "Department", "Group Count", "Groups"]
+    headers = [
+        "ID",
+        "Name",
+        "Email",
+        "Department",
+        "Source System",
+        "Azure ID",
+        "Odoo User ID",
+        "Last Seen In Azure",
+        "Group Count",
+        "Groups",
+    ]
     return create_csv_response(rows, headers, "users_export.csv")
 
 
@@ -691,6 +719,41 @@ async def export_non_compliant_analysis(
     
     headers = ["ID", "Name", "Module", "Issues"]
     return create_csv_response(rows, headers, "non_compliant_groups.csv")
+
+
+@app.post("/api/sync/azure-users")
+async def trigger_azure_user_sync(
+    db: Session = Depends(get_db)
+):
+    """Trigger Azure/Entra directory sync."""
+    try:
+        stats = sync_azure_users(db)
+        return {"status": "completed", "stats": stats}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/sync/odoo-db")
+async def trigger_odoo_db_sync(
+    db: Session = Depends(get_db)
+):
+    """Trigger remote Odoo Postgres sync."""
+    try:
+        stats = sync_odoo_postgres(db)
+        return {"status": "completed", "stats": stats}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/sync/status")
+async def get_sync_status(
+    sync_type: Optional[str] = None,
+    limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db)
+):
+    """Return recent sync run metadata."""
+    runs = list_recent_syncs(db, sync_type=sync_type, limit=limit)
+    return {"runs": [serialize_sync_run(run) for run in runs]}
 
 
 @app.get("/api/stats")

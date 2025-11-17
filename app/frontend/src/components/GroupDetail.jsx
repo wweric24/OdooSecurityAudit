@@ -31,6 +31,13 @@ import {
 import { ArrowBack as ArrowBackIcon, ExpandMore as ExpandMoreIcon } from '@mui/icons-material'
 import { api } from '../api/client'
 
+const panelStyle = {
+  backgroundColor: '#fff',
+  borderRadius: 3,
+  p: { xs: 2, md: 3 },
+  boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)',
+}
+
 function GroupDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -155,7 +162,8 @@ function GroupDetail() {
         </Alert>
       )}
 
-      <Grid container spacing={3} sx={{ mt: 1 }}>
+      <Box sx={panelStyle}>
+      <Grid container spacing={3}>
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>
@@ -449,6 +457,7 @@ function GroupDetail() {
           </Card>
         </Grid>
       </Grid>
+      </Box>
     </Box>
   )
 }

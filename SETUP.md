@@ -6,58 +6,56 @@
 - Node.js 18+
 - npm or yarn
 
-## Backend Setup
+## Quick Start (Recommended)
+
+Use the helper script to boot both services on the standardized ports (backend `3200`, frontend `3100`):
+
+```powershell
+pwsh -File start_app.ps1
+```
+
+The script stops anything already listening on those ports, runs `uvicorn` for FastAPI, installs frontend dependencies if needed, and starts Vite. When it finishes you can browse to `http://localhost:3100`.
+
+> Want custom ports? `pwsh -File start_app.ps1 -BackendPort 9000 -FrontendPort 9100`
+
+## Manual Backend Setup
 
 1. Install Python dependencies:
-```bash
-pip install -r requirements.txt
-```
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. Initialize the database (creates/updates SQLite tables):
+   ```bash
+   python -c "from app.backend.database import init_db; init_db()"
+   ```
+3. Run the backend server on port 3200:
+   ```bash
+   uvicorn app.backend.api:app --reload --host 0.0.0.0 --port 3200
+   ```
 
-2. Initialize the database:
-```bash
-python -c "from app.backend.database import init_db; init_db()"
-```
+API docs: `http://localhost:3200/docs`
 
-3. Run the backend server:
-```bash
-python app/backend/main.py
-```
+## Manual Frontend Setup
 
-Or using uvicorn directly:
-```bash
-uvicorn app.backend.api:app --reload --host 0.0.0.0 --port 8000
-```
+1. Install dependencies:
+   ```bash
+   cd app/frontend
+   npm install
+   ```
+2. Start the Vite dev server (port 3100 to match the backend CORS defaults):
+   ```bash
+   npm run dev -- --host 0.0.0.0 --port 3100
+   ```
 
-The API will be available at `http://localhost:8000`
-API documentation: `http://localhost:8000/docs`
-
-## Frontend Setup
-
-1. Navigate to frontend directory:
-```bash
-cd app/frontend
-```
-
-2. Install dependencies:
-```bash
-npm install
-```
-
-3. Start development server:
-```bash
-npm run dev
-```
-
-The frontend will be available at `http://localhost:3000`
+UI: `http://localhost:3100`
 
 ## First Import
 
 1. Start both backend and frontend servers
 2. Open `http://localhost:3000` in your browser
-3. Navigate to the "Import" page
-4. Upload your Odoo CSV export file: `reference docs/Access Groups (res.groups).csv`
-5. Wait for processing to complete
-6. Explore the data in Dashboard, Groups, Users, and Analysis sections
+3. Open the **Data & Integrations** tab
+4. Under **CSV Import**, upload the latest Odoo export (e.g., `reference docs/Access Groups (res.groups).csv`)
+5. After the success message, explore Dashboard, Groups, Users, and Analysis
 
 ## Docker Deployment (Optional)
 
@@ -81,6 +79,6 @@ This will start both backend and serve the frontend.
 - Ensure the `data/` directory exists and is writable
 
 ### Port Conflicts
-- Backend default port: 8000 (change in `app/backend/main.py`)
-- Frontend default port: 3000 (change in `app/frontend/vite.config.js`)
+- Backend default port: 3200 (override via `start_app.ps1 -BackendPort` or `uvicorn --port`)
+- Frontend default port: 3100 (override via `start_app.ps1 -FrontendPort` or `npm run dev -- --port`)
 

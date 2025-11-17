@@ -1,0 +1,22 @@
+{
+  "value": [
+    {
+      "id": "11111111-2222-3333-4444-555555555555",
+      "displayName": "Alice Azure",
+      "mail": "alice.azure@example.com",
+      "userPrincipalName": "alice.azure@example.com",
+      "department": "Finance",
+      "jobTitle": "Finance Analyst",
+      "accountEnabled": true
+    },
+    {
+      "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      "displayName": "Bob Azure",
+      "mail": "bob.azure@example.com",
+      "userPrincipalName": "bob.azure@example.com",
+      "department": "IT",
+      "jobTitle": "Systems Admin",
+      "accountEnabled": true
+    }
+  ]
+}

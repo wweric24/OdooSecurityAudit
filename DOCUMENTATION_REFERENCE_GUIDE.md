@@ -70,3 +70,20 @@ Quick reference to available documentation files for Odoo Security Groups and Ac
 - **Odoo_17_Security_Architecture_Comprehensive_Guide.md**: ~1,600 lines
 - **Odoo_User_Security_Group_Assignment.md**: ~299 lines
 
+---
+
+## Application Operations & Data Sync References
+
+- **`DATA_SYNC_PLAN.md`** – Architecture & roadmap for syncing Azure (Entra) users and remote Odoo Postgres data. Includes API scopes, Postgres table references, sync workflow, and security considerations.
+- **Data Tab (UI)** – The “Data & Integrations” tab in the application hosts Azure/Odoo sync triggers, CSV imports, and export downloads for day-to-day operations.
+- **`INTEGRATION_SETUP.md`** – Step-by-step instructions to configure Azure App registrations, environment variables, Odoo Postgres DSNs, and verification steps for each data feed.
+- **Environment Variables**:
+  - `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_GRAPH_SCOPE` – configure Microsoft Graph access.
+  - `AZURE_USER_SYNC_MOCK_FILE` – optional local JSON to simulate Azure data (defaults to `sample_data/azure_users_sample.json` during development).
+  - `ODOO_POSTGRES_DSN`, `ODOO_SYNC_MOCK_FILE` – DSN or mock file for Odoo Postgres snapshots.
+  - `ALLOW_SYNC_MOCKS` – set to `0` to disable mock file usage.
+- **API Endpoints**:
+  - `POST /api/sync/azure-users` – pull latest Entra users/departments into the app; UI button on Users page.
+  - `POST /api/sync/odoo-db` – query remote Postgres for Odoo groups/users; UI button on Groups page.
+  - `GET /api/sync/status?sync_type=<type>` – inspect recent sync runs (status, timestamps, row counts) for dashboards or troubleshooting.
+

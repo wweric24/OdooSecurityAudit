@@ -20,6 +20,13 @@ import {
 } from '@mui/material'
 import { api } from '../api/client'
 
+const panelStyle = {
+  backgroundColor: '#fff',
+  borderRadius: 3,
+  p: { xs: 2, md: 3 },
+  boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)',
+}
+
 function Analysis() {
   const [compliance, setCompliance] = useState(null)
   const [gaps, setGaps] = useState(null)
@@ -110,7 +117,8 @@ function Analysis() {
         </Alert>
       )}
 
-      <Grid container spacing={3} sx={{ mt: 1 }}>
+      <Box sx={panelStyle}>
+      <Grid container spacing={3}>
         {compliance && (
           <Grid item xs={12}>
             <Card>
@@ -264,6 +272,7 @@ function Analysis() {
           </Grid>
         )}
       </Grid>
+      </Box>
     </Box>
   )
 }

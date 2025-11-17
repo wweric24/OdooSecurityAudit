@@ -20,6 +20,16 @@ A web-based application for managing, visualizing, and analyzing Odoo security g
 
 ## Setup
 
+### Quick Start (PowerShell)
+
+If you are on Windows with PowerShell 7+, you can launch both services (FastAPI on port `3200` and Vite on port `3100`) with a single command. The script automatically stops anything already listening on those ports and installs frontend dependencies if necessary:
+
+```powershell
+pwsh -File start_app.ps1
+```
+
+> Need different ports? Run `pwsh -File start_app.ps1 -BackendPort 9000 -FrontendPort 9100`.
+
 ### Backend Setup
 
 1. Install Python dependencies:
@@ -27,13 +37,13 @@ A web-based application for managing, visualizing, and analyzing Odoo security g
 pip install -r requirements.txt
 ```
 
-2. Run the backend server:
+2. Run the backend server (matching the quick-start port 3200):
 ```bash
 cd app/backend
-python main.py
+python -m uvicorn app.backend.api:app --host 0.0.0.0 --port 3200 --reload
 ```
 
-The API will be available at `http://localhost:8000`
+The API will be available at `http://localhost:3200`
 
 ### Frontend Setup
 
@@ -43,12 +53,12 @@ cd app/frontend
 npm install
 ```
 
-2. Start the development server:
+2. Start the development server (port 3100 to align with the script):
 ```bash
-npm run dev
+npm run dev -- --host 0.0.0.0 --port 3100
 ```
 
-The frontend will be available at `http://localhost:3000`
+The frontend will be available at `http://localhost:3100`
 
 ## Usage
 

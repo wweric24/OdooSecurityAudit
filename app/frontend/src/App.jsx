@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom'
 import {
   AppBar,
   Toolbar,
@@ -17,7 +17,7 @@ import Groups from './components/Groups'
 import GroupDetail from './components/GroupDetail'
 import Users from './components/Users'
 import Analysis from './components/Analysis'
-import Import from './components/Import'
+import Data from './components/Data'
 
 const theme = createTheme({
   palette: {
@@ -27,52 +27,74 @@ const theme = createTheme({
     secondary: {
       main: '#dc004e',
     },
+    background: {
+      default: '#f6f8fb',
+    },
   },
 })
 
-function App() {
+const tabs = [
+  { label: 'Dashboard', path: '/' },
+  { label: 'Groups', path: '/groups' },
+  { label: 'Users', path: '/users' },
+  { label: 'Analysis', path: '/analysis' },
+  { label: 'Data', path: '/data' },
+]
+
+function AppLayout() {
+  const location = useLocation()
   const [currentTab, setCurrentTab] = useState(0)
 
-  const handleTabChange = (event, newValue) => {
-    setCurrentTab(newValue)
-  }
+  useEffect(() => {
+    const matchIndex = tabs.findIndex((tab) =>
+      tab.path === '/'
+        ? location.pathname === '/'
+        : location.pathname.startsWith(tab.path)
+    )
+    setCurrentTab(matchIndex === -1 ? 0 : matchIndex)
+  }, [location.pathname])
 
+  return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+      <AppBar position="static">
+        <Toolbar>
+          <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+            Odoo Security Management
+          </Typography>
+        </Toolbar>
+      </AppBar>
+      
+      <Box sx={{ borderBottom: 1, borderColor: 'divider', backgroundColor: '#fff' }}>
+        <Container>
+          <Tabs value={currentTab} onChange={(event, value) => setCurrentTab(value)}>
+            {tabs.map((tab) => (
+              <Tab key={tab.path} label={tab.label} component={Link} to={tab.path} />
+            ))}
+          </Tabs>
+        </Container>
+      </Box>
+
+      <Container sx={{ flexGrow: 1, py: 3 }}>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/groups" element={<Groups />} />
+          <Route path="/groups/:id" element={<GroupDetail />} />
+          <Route path="/users" element={<Users />} />
+          <Route path="/analysis" element={<Analysis />} />
+          <Route path="/data" element={<Data />} />
+          <Route path="/import" element={<Data />} />
+        </Routes>
+      </Container>
+    </Box>
+  )
+}
+
+function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Router>
-        <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-          <AppBar position="static">
-            <Toolbar>
-              <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-                Odoo Security Management
-              </Typography>
-            </Toolbar>
-          </AppBar>
-          
-          <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-            <Container>
-              <Tabs value={currentTab} onChange={handleTabChange}>
-                <Tab label="Dashboard" component={Link} to="/" />
-                <Tab label="Groups" component={Link} to="/groups" />
-                <Tab label="Users" component={Link} to="/users" />
-                <Tab label="Analysis" component={Link} to="/analysis" />
-                <Tab label="Import" component={Link} to="/import" />
-              </Tabs>
-            </Container>
-          </Box>
-
-          <Container sx={{ flexGrow: 1, py: 3 }}>
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/groups" element={<Groups />} />
-              <Route path="/groups/:id" element={<GroupDetail />} />
-              <Route path="/users" element={<Users />} />
-              <Route path="/analysis" element={<Analysis />} />
-              <Route path="/import" element={<Import />} />
-            </Routes>
-          </Container>
-        </Box>
+      <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <AppLayout />
       </Router>
     </ThemeProvider>
   )

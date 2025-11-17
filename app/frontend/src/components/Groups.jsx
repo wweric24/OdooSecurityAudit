@@ -19,22 +19,26 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Button,
   Stack,
 } from '@mui/material'
 import { api } from '../api/client'
+
+const panelStyle = {
+  backgroundColor: '#fff',
+  borderRadius: 3,
+  p: { xs: 2, md: 3 },
+  boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)',
+}
 
 function Groups() {
   const navigate = useNavigate()
   const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [exportError, setExportError] = useState(null)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [moduleFilter, setModuleFilter] = useState('')
   const [modules, setModules] = useState([])
-  const [exporting, setExporting] = useState(false)
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const limit = 50
@@ -83,39 +87,6 @@ function Groups() {
     setPage(value)
   }
 
-  const downloadBlob = (blob, filename) => {
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.setAttribute('download', filename)
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    window.URL.revokeObjectURL(url)
-  }
-
-  const handleExport = async () => {
-    try {
-      setExporting(true)
-      setExportError(null)
-      const params = {}
-      if (search) params.search = search
-      if (statusFilter) params.status = statusFilter
-      if (moduleFilter) params.module = moduleFilter
-
-      const response = await api.exportGroups(params)
-      const blob =
-        response.data instanceof Blob
-          ? response.data
-          : new Blob([response.data], { type: 'text/csv' })
-      downloadBlob(blob, 'groups_export.csv')
-    } catch (err) {
-      setExportError(err.message || 'Failed to export groups')
-    } finally {
-      setExporting(false)
-    }
-  }
-
   if (loading && groups.length === 0) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
@@ -134,11 +105,9 @@ function Groups() {
         sx={{ mb: 2 }}
       >
         <Typography variant="h4">Security Groups</Typography>
-        <Button variant="contained" onClick={handleExport} disabled={exporting}>
-          {exporting ? 'Exporting...' : 'Export CSV'}
-        </Button>
       </Stack>
 
+      <Box sx={panelStyle}>
       <Box sx={{ display: 'flex', gap: 2, mb: 3, flexWrap: 'wrap' }}>
         <TextField
           label="Search"
@@ -193,11 +162,6 @@ function Groups() {
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
           {error}
-        </Alert>
-      )}
-      {exportError && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {exportError}
         </Alert>
       )}
 
@@ -291,6 +255,7 @@ function Groups() {
           />
         </Box>
       )}
+      </Box>
     </Box>
   )
 }

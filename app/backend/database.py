@@ -43,8 +43,23 @@ def ensure_additional_columns(db_engine: Engine):
         
         if "is_archived" not in security_column_names:
             conn.execute(text("ALTER TABLE security_groups ADD COLUMN is_archived BOOLEAN DEFAULT 0"))
+        if "source_system" not in security_column_names:
+            conn.execute(text("ALTER TABLE security_groups ADD COLUMN source_system VARCHAR(50)"))
+        if "odoo_id" not in security_column_names:
+            conn.execute(text("ALTER TABLE security_groups ADD COLUMN odoo_id INTEGER"))
+        if "synced_from_postgres_at" not in security_column_names:
+            conn.execute(text("ALTER TABLE security_groups ADD COLUMN synced_from_postgres_at DATETIME"))
+
         if "department" not in user_column_names:
             conn.execute(text("ALTER TABLE users ADD COLUMN department VARCHAR(255)"))
+        if "azure_id" not in user_column_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN azure_id VARCHAR(255)"))
+        if "odoo_user_id" not in user_column_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN odoo_user_id INTEGER"))
+        if "source_system" not in user_column_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN source_system VARCHAR(50)"))
+        if "last_seen_in_azure_at" not in user_column_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN last_seen_in_azure_at DATETIME"))
 
 
 def get_db() -> Session:

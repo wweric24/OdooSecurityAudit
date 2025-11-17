@@ -763,14 +763,14 @@ async def get_statistics(
     """Get overall statistics."""
     groups = db.query(SecurityGroup).all()
     users = db.query(User).all()
-    
+
     total_groups = len(groups)
     documented = sum(1 for g in groups if g.is_documented)
     undocumented = total_groups - documented
     under_review = sum(1 for g in groups if g.status and "under review" in g.status.lower())
     confirmed = sum(1 for g in groups if g.status and "confirmed" in g.status.lower())
     follows_naming = sum(1 for g in groups if g.follows_naming_convention)
-    
+
     return {
         "total_groups": total_groups,
         "total_users": len(users),
@@ -780,5 +780,132 @@ async def get_statistics(
         "confirmed": confirmed,
         "follows_naming_convention": follows_naming,
         "compliance_percentage": round((follows_naming / total_groups * 100) if total_groups > 0 else 0, 2)
+    }
+
+
+@app.get("/api/config/status")
+async def get_config_status():
+    """Get current configuration status for all integrations."""
+    return settings.get_config_status()
+
+
+@app.post("/api/config/test-azure")
+async def test_azure_connection():
+    """Test Azure AD connection without performing a full sync."""
+    if not settings.azure_configured:
+        return {
+            "success": False,
+            "error": "Azure credentials not configured. Set AZURE_TENANT_ID, AZURE_CLIENT_ID, and AZURE_CLIENT_SECRET in .env"
+        }
+
+    try:
+        from msal import ConfidentialClientApplication
+
+        msal_app = ConfidentialClientApplication(
+            settings.azure_client_id,
+            authority=f"https://login.microsoftonline.com/{settings.azure_tenant_id}",
+            client_credential=settings.azure_client_secret,
+        )
+
+        result = msal_app.acquire_token_for_client(scopes=[settings.azure_graph_scope])
+
+        if "access_token" in result:
+            return {
+                "success": True,
+                "message": "Azure AD connection successful. Token acquired.",
+                "token_type": result.get("token_type"),
+                "expires_in": result.get("expires_in")
+            }
+        else:
+            return {
+                "success": False,
+                "error": result.get("error_description", "Failed to acquire token"),
+                "error_code": result.get("error")
+            }
+    except Exception as exc:
+        return {
+            "success": False,
+            "error": str(exc)
+        }
+
+
+@app.post("/api/config/test-odoo")
+async def test_odoo_connection():
+    """Test Odoo PostgreSQL connection without performing a full sync."""
+    if not settings.odoo_configured:
+        return {
+            "success": False,
+            "error": f"Odoo database not configured. Set ODOO_{settings.odoo_environment}_DSN in .env",
+            "environment": settings.odoo_environment
+        }
+
+    try:
+        import psycopg
+
+        # Parse DSN to extract connection info (mask password for response)
+        dsn = settings.odoo_postgres_dsn
+
+        # Connect and run a simple test query
+        with psycopg.connect(dsn.replace("postgresql+psycopg://", "postgresql://")) as conn:
+            with conn.cursor() as cur:
+                # Test basic connectivity
+                cur.execute("SELECT version()")
+                version = cur.fetchone()[0]
+
+                # Count rows in key Odoo tables
+                cur.execute("SELECT COUNT(*) FROM res_groups")
+                group_count = cur.fetchone()[0]
+
+                cur.execute("SELECT COUNT(*) FROM res_users WHERE active = TRUE")
+                user_count = cur.fetchone()[0]
+
+                return {
+                    "success": True,
+                    "message": f"Connected to Odoo {settings.odoo_environment_display} database",
+                    "environment": settings.odoo_environment,
+                    "postgres_version": version.split(",")[0] if "," in version else version[:50],
+                    "odoo_groups": group_count,
+                    "odoo_active_users": user_count
+                }
+    except Exception as exc:
+        return {
+            "success": False,
+            "error": str(exc),
+            "environment": settings.odoo_environment
+        }
+
+
+@app.post("/api/config/switch-environment")
+async def switch_odoo_environment(environment: str = Query(..., regex="^(PREPROD|PROD)$")):
+    """Switch between PREPROD and PROD Odoo environments."""
+    # Note: This only affects the current session. To persist, update .env file
+    old_env = settings.odoo_environment
+
+    # Check if the target environment is configured
+    if environment == "PROD" and not settings.odoo_prod_dsn:
+        return {
+            "success": False,
+            "error": "PROD environment not configured. Set ODOO_PROD_DSN in .env"
+        }
+    if environment == "PREPROD" and not settings.odoo_preprod_dsn:
+        return {
+            "success": False,
+            "error": "PREPROD environment not configured. Set ODOO_PREPROD_DSN in .env"
+        }
+
+    # Update the environment (note: this is in-memory only)
+    os.environ["ODOO_ENVIRONMENT"] = environment
+
+    # Reload settings to pick up the change
+    from importlib import reload
+    import app.backend.settings as settings_module
+    reload(settings_module)
+
+    return {
+        "success": True,
+        "message": f"Switched from {old_env} to {environment}",
+        "previous_environment": old_env,
+        "current_environment": environment,
+        "note": "This change is temporary. Update ODOO_ENVIRONMENT in .env to persist."
     }
 

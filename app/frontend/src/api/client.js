@@ -96,6 +96,23 @@ export const api = {
   getStats: () => {
     return client.get('/api/stats')
   },
+
+  // Configuration
+  getConfigStatus: () => {
+    return client.get('/api/config/status')
+  },
+
+  testAzureConnection: () => {
+    return client.post('/api/config/test-azure')
+  },
+
+  testOdooConnection: () => {
+    return client.post('/api/config/test-odoo')
+  },
+
+  switchOdooEnvironment: (environment) => {
+    return client.post(`/api/config/switch-environment?environment=${environment}`)
+  },
 }
 
 export default client

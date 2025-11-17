@@ -25,7 +25,10 @@ class Settings:
     azure_graph_scope: str = os.getenv("AZURE_GRAPH_SCOPE", "https://graph.microsoft.com/.default")
     azure_user_sync_mock_file: Optional[str] = os.getenv("AZURE_USER_SYNC_MOCK_FILE")
 
-    odoo_postgres_dsn: Optional[str] = os.getenv("ODOO_POSTGRES_DSN")
+    # Odoo environment switching
+    odoo_environment: str = os.getenv("ODOO_ENVIRONMENT", "PREPROD")
+    odoo_preprod_dsn: Optional[str] = os.getenv("ODOO_PREPROD_DSN")
+    odoo_prod_dsn: Optional[str] = os.getenv("ODOO_PROD_DSN")
     odoo_sync_mock_file: Optional[str] = os.getenv("ODOO_SYNC_MOCK_FILE")
 
     sync_page_size: int = int(os.getenv("SYNC_PAGE_SIZE", "500"))
@@ -41,12 +44,51 @@ class Settings:
         return rel if rel.is_file() else None
 
     @property
+    def odoo_postgres_dsn(self) -> Optional[str]:
+        """Return the DSN for the currently active Odoo environment."""
+        # First check for legacy single DSN (backwards compatibility)
+        legacy_dsn = os.getenv("ODOO_POSTGRES_DSN")
+        if legacy_dsn:
+            return legacy_dsn
+
+        # Otherwise use environment-specific DSN
+        if self.odoo_environment.upper() == "PROD":
+            return self.odoo_prod_dsn
+        else:  # Default to PREPROD
+            return self.odoo_preprod_dsn
+
+    @property
     def azure_configured(self) -> bool:
         return all([self.azure_tenant_id, self.azure_client_id, self.azure_client_secret])
 
     @property
     def odoo_configured(self) -> bool:
         return self.odoo_postgres_dsn is not None
+
+    @property
+    def odoo_environment_display(self) -> str:
+        """Return a display-friendly name for the current Odoo environment."""
+        if self.odoo_environment.upper() == "PROD":
+            return "Production"
+        return "Pre-Production"
+
+    def get_config_status(self) -> dict:
+        """Return configuration status for all integrations."""
+        return {
+            "azure": {
+                "configured": self.azure_configured,
+                "tenant_id": self.azure_tenant_id[:8] + "..." if self.azure_tenant_id else None,
+                "client_id": self.azure_client_id[:8] + "..." if self.azure_client_id else None,
+            },
+            "odoo": {
+                "configured": self.odoo_configured,
+                "environment": self.odoo_environment,
+                "environment_display": self.odoo_environment_display,
+                "has_preprod": self.odoo_preprod_dsn is not None,
+                "has_prod": self.odoo_prod_dsn is not None,
+            },
+            "mock_syncs_allowed": self.allow_mock_syncs,
+        }
 
 
 settings = Settings()

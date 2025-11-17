@@ -18,12 +18,18 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  ToggleButtonGroup,
+  ToggleButton,
+  CircularProgress,
 } from '@mui/material'
 import {
   CloudSync as CloudSyncIcon,
   Storage as StorageIcon,
   UploadFile as UploadFileIcon,
   Download as DownloadIcon,
+  CheckCircle as CheckCircleIcon,
+  Error as ErrorIcon,
+  Settings as SettingsIcon,
 } from '@mui/icons-material'
 import { api } from '../api/client'
 
@@ -56,9 +62,27 @@ function Data() {
   const [importError, setImportError] = useState(null)
   const [exporting, setExporting] = useState(false)
 
+  // Configuration status
+  const [configStatus, setConfigStatus] = useState(null)
+  const [testingAzure, setTestingAzure] = useState(false)
+  const [testingOdoo, setTestingOdoo] = useState(false)
+  const [azureTestResult, setAzureTestResult] = useState(null)
+  const [odooTestResult, setOdooTestResult] = useState(null)
+  const [switchingEnv, setSwitchingEnv] = useState(false)
+
   useEffect(() => {
     loadSyncStatus()
+    loadConfigStatus()
   }, [])
+
+  const loadConfigStatus = async () => {
+    try {
+      const response = await api.getConfigStatus()
+      setConfigStatus(response.data)
+    } catch (err) {
+      console.warn('Unable to load config status', err)
+    }
+  }
 
   const loadSyncStatus = async () => {
     try {
@@ -70,6 +94,53 @@ function Data() {
       setOdooRun(odoo.data.runs?.[0] || null)
     } catch (err) {
       console.warn('Unable to load sync status', err)
+    }
+  }
+
+  const handleTestAzure = async () => {
+    setTestingAzure(true)
+    setAzureTestResult(null)
+    try {
+      const response = await api.testAzureConnection()
+      setAzureTestResult(response.data)
+    } catch (err) {
+      setAzureTestResult({
+        success: false,
+        error: err.response?.data?.detail || err.message || 'Test failed',
+      })
+    } finally {
+      setTestingAzure(false)
+    }
+  }
+
+  const handleTestOdoo = async () => {
+    setTestingOdoo(true)
+    setOdooTestResult(null)
+    try {
+      const response = await api.testOdooConnection()
+      setOdooTestResult(response.data)
+    } catch (err) {
+      setOdooTestResult({
+        success: false,
+        error: err.response?.data?.detail || err.message || 'Test failed',
+      })
+    } finally {
+      setTestingOdoo(false)
+    }
+  }
+
+  const handleEnvironmentChange = async (event, newEnv) => {
+    if (!newEnv || newEnv === configStatus?.odoo?.environment) return
+    setSwitchingEnv(true)
+    try {
+      await api.switchOdooEnvironment(newEnv)
+      await loadConfigStatus()
+      setOdooTestResult(null)
+      setSyncMessage(`Switched to ${newEnv} environment`)
+    } catch (err) {
+      setSyncError(err.response?.data?.detail || err.message || 'Failed to switch environment')
+    } finally {
+      setSwitchingEnv(false)
     }
   }
 
@@ -181,17 +252,162 @@ function Data() {
       </Typography>
 
       {syncMessage && (
-        <Alert severity="success" sx={{ mt: 2 }}>
+        <Alert severity="success" sx={{ mt: 2 }} onClose={() => setSyncMessage(null)}>
           {syncMessage}
         </Alert>
       )}
       {syncError && (
-        <Alert severity="error" sx={{ mt: 2 }}>
+        <Alert severity="error" sx={{ mt: 2 }} onClose={() => setSyncError(null)}>
           {syncError}
         </Alert>
       )}
 
       <Grid container spacing={3} sx={{ mt: 1 }}>
+        {/* Configuration Status Panel */}
+        <Grid item xs={12}>
+          <Card>
+            <CardContent>
+              <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
+                <SettingsIcon color="primary" />
+                <Box>
+                  <Typography variant="h6">Integration Configuration Status</Typography>
+                  <Typography variant="body2" color="textSecondary">
+                    Verify your Azure and Odoo connections are properly configured before syncing.
+                  </Typography>
+                </Box>
+              </Stack>
+
+              <Grid container spacing={3}>
+                {/* Azure Status */}
+                <Grid item xs={12} md={6}>
+                  <Paper variant="outlined" sx={{ p: 2 }}>
+                    <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                      {configStatus?.azure?.configured ? (
+                        <CheckCircleIcon color="success" />
+                      ) : (
+                        <ErrorIcon color="error" />
+                      )}
+                      <Typography variant="subtitle1" fontWeight="bold">
+                        Azure AD
+                      </Typography>
+                      <Chip
+                        label={configStatus?.azure?.configured ? 'Configured' : 'Not Configured'}
+                        size="small"
+                        color={configStatus?.azure?.configured ? 'success' : 'error'}
+                      />
+                    </Stack>
+                    {configStatus?.azure?.configured && (
+                      <Typography variant="body2" color="textSecondary" sx={{ mb: 1 }}>
+                        Tenant: {configStatus.azure.tenant_id}
+                      </Typography>
+                    )}
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      onClick={handleTestAzure}
+                      disabled={!configStatus?.azure?.configured || testingAzure}
+                      startIcon={testingAzure ? <CircularProgress size={16} /> : null}
+                    >
+                      {testingAzure ? 'Testing...' : 'Test Connection'}
+                    </Button>
+                    {azureTestResult && (
+                      <Alert
+                        severity={azureTestResult.success ? 'success' : 'error'}
+                        sx={{ mt: 1 }}
+                        onClose={() => setAzureTestResult(null)}
+                      >
+                        {azureTestResult.success
+                          ? azureTestResult.message
+                          : azureTestResult.error}
+                      </Alert>
+                    )}
+                  </Paper>
+                </Grid>
+
+                {/* Odoo Status */}
+                <Grid item xs={12} md={6}>
+                  <Paper variant="outlined" sx={{ p: 2 }}>
+                    <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                      {configStatus?.odoo?.configured ? (
+                        <CheckCircleIcon color="success" />
+                      ) : (
+                        <ErrorIcon color="error" />
+                      )}
+                      <Typography variant="subtitle1" fontWeight="bold">
+                        Odoo Database
+                      </Typography>
+                      <Chip
+                        label={configStatus?.odoo?.configured ? 'Configured' : 'Not Configured'}
+                        size="small"
+                        color={configStatus?.odoo?.configured ? 'success' : 'error'}
+                      />
+                    </Stack>
+
+                    <Box sx={{ mb: 2 }}>
+                      <Typography variant="body2" color="textSecondary" sx={{ mb: 1 }}>
+                        Environment:
+                      </Typography>
+                      <ToggleButtonGroup
+                        value={configStatus?.odoo?.environment || 'PREPROD'}
+                        exclusive
+                        onChange={handleEnvironmentChange}
+                        size="small"
+                        disabled={switchingEnv}
+                      >
+                        <ToggleButton value="PREPROD" color="info">
+                          {configStatus?.odoo?.has_preprod ? (
+                            <CheckCircleIcon sx={{ mr: 0.5, fontSize: 16 }} color="success" />
+                          ) : (
+                            <ErrorIcon sx={{ mr: 0.5, fontSize: 16 }} color="error" />
+                          )}
+                          Pre-Production
+                        </ToggleButton>
+                        <ToggleButton value="PROD" color="warning">
+                          {configStatus?.odoo?.has_prod ? (
+                            <CheckCircleIcon sx={{ mr: 0.5, fontSize: 16 }} color="success" />
+                          ) : (
+                            <ErrorIcon sx={{ mr: 0.5, fontSize: 16 }} color="error" />
+                          )}
+                          Production
+                        </ToggleButton>
+                      </ToggleButtonGroup>
+                    </Box>
+
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      onClick={handleTestOdoo}
+                      disabled={!configStatus?.odoo?.configured || testingOdoo}
+                      startIcon={testingOdoo ? <CircularProgress size={16} /> : null}
+                    >
+                      {testingOdoo ? 'Testing...' : 'Test Connection'}
+                    </Button>
+                    {odooTestResult && (
+                      <Alert
+                        severity={odooTestResult.success ? 'success' : 'error'}
+                        sx={{ mt: 1 }}
+                        onClose={() => setOdooTestResult(null)}
+                      >
+                        {odooTestResult.success ? (
+                          <Box>
+                            {odooTestResult.message}
+                            <br />
+                            <Typography variant="caption">
+                              Groups: {odooTestResult.odoo_groups} | Users: {odooTestResult.odoo_active_users}
+                            </Typography>
+                          </Box>
+                        ) : (
+                          odooTestResult.error
+                        )}
+                      </Alert>
+                    )}
+                  </Paper>
+                </Grid>
+              </Grid>
+            </CardContent>
+          </Card>
+        </Grid>
+
         <Grid item xs={12} md={6}>
           <Card sx={{ height: '100%' }}>
             <CardContent>
@@ -209,9 +425,19 @@ function Data() {
                   • {line}
                 </Typography>
               ))}
-              <Button variant="contained" sx={{ mt: 2 }} onClick={handleAzureSync}>
+              <Button
+                variant="contained"
+                sx={{ mt: 2 }}
+                onClick={handleAzureSync}
+                disabled={!configStatus?.azure?.configured}
+              >
                 Sync Azure Directory
               </Button>
+              {!configStatus?.azure?.configured && (
+                <Typography variant="caption" color="error" display="block" sx={{ mt: 1 }}>
+                  Configure Azure credentials in .env to enable
+                </Typography>
+              )}
               <Divider sx={{ my: 2 }} />
               <Typography variant="body2" color="textSecondary">
                 Last Run:
@@ -232,7 +458,17 @@ function Data() {
               <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
                 <StorageIcon color="primary" />
                 <Box>
-                  <Typography variant="h6">Odoo Postgres Sync</Typography>
+                  <Typography variant="h6">
+                    Odoo Postgres Sync
+                    {configStatus?.odoo?.environment && (
+                      <Chip
+                        label={configStatus.odoo.environment_display}
+                        size="small"
+                        color={configStatus.odoo.environment === 'PROD' ? 'warning' : 'info'}
+                        sx={{ ml: 1 }}
+                      />
+                    )}
+                  </Typography>
                   <Typography variant="body2" color="textSecondary">
                     Query the remote Odoo database for groups, users, and inheritance chains.
                   </Typography>
@@ -243,9 +479,19 @@ function Data() {
                   • {line}
                 </Typography>
               ))}
-              <Button variant="contained" sx={{ mt: 2 }} onClick={handleOdooSync}>
+              <Button
+                variant="contained"
+                sx={{ mt: 2 }}
+                onClick={handleOdooSync}
+                disabled={!configStatus?.odoo?.configured}
+              >
                 Sync Odoo DB
               </Button>
+              {!configStatus?.odoo?.configured && (
+                <Typography variant="caption" color="error" display="block" sx={{ mt: 1 }}>
+                  Configure Odoo DSN in .env to enable
+                </Typography>
+              )}
               <Divider sx={{ my: 2 }} />
               <Typography variant="body2" color="textSecondary">
                 Last Run:

@@ -1,0 +1,99 @@
+{
+  "naming_convention": {
+    "pattern": "Odoo - [Module] / [Access Level]",
+    "regex": "^Odoo - (.+) / (.+)$",
+    "module_group": 1,
+    "access_level_group": 2,
+    "description": "Security groups must follow the pattern: Odoo - [Module] / [Access Level]"
+  },
+  "access_levels": {
+    "hierarchy": {
+      "Level 1": {
+        "name": "App Administrator",
+        "description": "Full system configuration and setup authority",
+        "level": 1
+      },
+      "Level 2": {
+        "name": "Manager",
+        "description": "Full management access with financial visibility",
+        "level": 2
+      },
+      "Level 3": {
+        "name": "User",
+        "description": "Standard user access for operational tasks",
+        "level": 3
+      }
+    },
+    "additional_levels": {
+      "Level 4": {
+        "name": "Read Only",
+        "description": "View-only access",
+        "level": 4
+      }
+    },
+    "rules": {
+      "users_should_only_have_highest_level": true,
+      "never_assign_multiple_levels_same_app": true,
+      "higher_levels_inherit_lower_permissions": true
+    }
+  },
+  "required_fields": {
+    "who_requires": {
+      "required": true,
+      "description": "Specific roles/teams that require access"
+    },
+    "why_required": {
+      "required": true,
+      "description": "Business justification for access"
+    },
+    "last_audit_date": {
+      "required": true,
+      "description": "Date of last security audit",
+      "annual_audit_required": true
+    },
+    "permissions": {
+      "required": true,
+      "description": "Clear description of what is included and excluded"
+    }
+  },
+  "modules": {
+    "categories": [
+      "Project",
+      "Accounting",
+      "Employees",
+      "Documents",
+      "Purchasing",
+      "Inventory",
+      "Sales",
+      "Helpdesk",
+      "Expenses",
+      "Manufacturing",
+      "Timesheets",
+      "Maintenance",
+      "Sign",
+      "Magento",
+      "Website",
+      "eLearning",
+      "Knowledge",
+      "Activity Dashboard",
+      "Technical",
+      "Administration",
+      "Extra Rights",
+      "Statements"
+    ]
+  },
+  "validation": {
+    "check_naming_convention": true,
+    "check_required_fields": true,
+    "check_hierarchy_violations": true,
+    "check_duplicate_groups": true,
+    "flag_undocumented_groups": true,
+    "flag_overdue_audits": true
+  },
+  "audit": {
+    "annual_audit_required": true,
+    "audit_grace_period_days": 30,
+    "flag_overdue_after_days": 365
+  }
+}
+

@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  test-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python -m unittest discover tests -v
+    volumes:
+      - ./tests:/app/tests
+      - ./app:/app/app
+    environment:
+      - DATABASE_URL=sqlite:///./data/test.db
+    working_dir: /app
+

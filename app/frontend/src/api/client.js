@@ -47,6 +47,10 @@ export const api = {
     })
   },
 
+  bulkUpdateGroups: (payload) => {
+    return client.post('/api/groups/bulk-update', payload)
+  },
+
   // Users
   getUsers: (params = {}) => {
     return client.get('/api/users', { params })
@@ -104,6 +108,22 @@ export const api = {
     return client.get('/api/sync/status', { params })
   },
 
+  previewAzureDeletion: () => {
+    return client.get('/api/sync/azure-users/preview')
+  },
+
+  deleteAzureData: () => {
+    return client.delete('/api/sync/azure-users')
+  },
+
+  previewOdooDeletion: () => {
+    return client.get('/api/sync/odoo-db/preview')
+  },
+
+  deleteOdooData: () => {
+    return client.delete('/api/sync/odoo-db')
+  },
+
   // Statistics
   getStats: () => {
     return client.get('/api/stats')
@@ -135,14 +155,20 @@ export const api = {
     return client.get('/api/comparison/summary')
   },
 
-  getComparisonResults: (discrepancyType = null) => {
-    const params = discrepancyType ? { discrepancy_type: discrepancyType } : {}
+  getComparisonResults: (params = {}) => {
     return client.get('/api/comparison/results', { params })
   },
 
   resolveDiscrepancy: (resultId, notes = null) => {
     const params = notes ? { notes } : {}
     return client.post(`/api/comparison/resolve/${resultId}`, null, { params })
+  },
+
+  exportComparisonResults: (params = {}) => {
+    return client.get('/api/export/comparison', {
+      params,
+      responseType: 'blob',
+    })
   },
 
   // CRUD Permissions

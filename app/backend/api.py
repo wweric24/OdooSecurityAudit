@@ -4,11 +4,11 @@ FastAPI backend for Odoo Security Management Application.
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, field_validator
-from sqlalchemy import func
+from pydantic import BaseModel, field_validator, model_validator
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.exc import IntegrityError
-from typing import List, Optional
+from typing import Dict, List, Optional
 import csv
 import io
 import os
@@ -33,7 +33,15 @@ from app.backend.services.comparison_service import (
     get_comparison_summary,
     mark_discrepancy_resolved,
 )
-from app.data.models import SecurityGroup, User, ImportHistory, user_group_association, AccessRight, ComparisonResult
+from app.data.models import (
+    SecurityGroup,
+    User,
+    ImportHistory,
+    user_group_association,
+    AccessRight,
+    ComparisonResult,
+    group_inheritance,
+)
 from app.data.csv_parser import CSVParser
 
 app = FastAPI(
@@ -75,7 +83,7 @@ class GroupUpdateRequest(BaseModel):
         """Validate status input."""
         if value is None:
             return value
-        allowed = {"Under Review", "Confirmed", "Deprecated"}
+        allowed = {"Under Review", "Confirmed", "Deprecated", "Active", "Legacy"}
         if value not in allowed:
             raise ValueError(f"Status must be one of {', '.join(sorted(allowed))}")
         return value
@@ -88,6 +96,110 @@ class GroupUpdateRequest(BaseModel):
             return value
         cleaned = value.strip()
         return cleaned if cleaned else None
+
+
+class BulkGroupUpdateRequest(GroupUpdateRequest):
+    """Payload for bulk updating multiple groups."""
+
+    group_ids: List[int]
+
+    @field_validator("group_ids")
+    @classmethod
+    def validate_group_ids(cls, value: List[int]) -> List[int]:
+        """Ensure we have at least one id and enforce a reasonable limit."""
+        if not value:
+            raise ValueError("group_ids must contain at least one group id")
+        if len(value) > 500:
+            raise ValueError("Cannot update more than 500 groups at once")
+        # Deduplicate while preserving order
+        return list(dict.fromkeys(value))
+
+    @model_validator(mode="after")
+    def validate_fields(self):
+        """Make sure at least one field besides group_ids is provided."""
+        updates = self.model_dump(exclude={"group_ids"}, exclude_none=True)
+        if not updates:
+            raise ValueError("Provide at least one field to update")
+        return self
+
+
+def reset_azure_directory(db: Session) -> Dict[str, int]:
+    """Delete users synced from Azure/Entra to allow a clean refresh."""
+    azure_user_ids = [
+        user_id
+        for (user_id,) in db.query(User.id)
+        .filter(or_(User.azure_id.isnot(None), User.source_system == "Azure"))
+        .all()
+    ]
+
+    if not azure_user_ids:
+        return {"deleted_users": 0, "deleted_memberships": 0}
+
+    deleted_memberships = (
+        db.execute(
+            user_group_association.delete().where(
+                user_group_association.c.user_id.in_(azure_user_ids)
+            )
+        ).rowcount
+        or 0
+    )
+
+    deleted_users = (
+        db.query(User)
+        .filter(User.id.in_(azure_user_ids))
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+
+    return {"deleted_users": deleted_users, "deleted_memberships": deleted_memberships}
+
+
+def reset_odoo_dataset(db: Session) -> Dict[str, int]:
+    """Delete Odoo-sourced security groups and access rights."""
+    odoo_group_ids = [
+        group_id
+        for (group_id,) in db.query(SecurityGroup.id)
+        .filter(
+            or_(
+                SecurityGroup.source_system.ilike("Odoo%"),
+                SecurityGroup.odoo_id.isnot(None),
+            )
+        )
+        .all()
+    ]
+
+    if not odoo_group_ids:
+        return {
+            "deleted_groups": 0,
+            "deleted_memberships": 0,
+            "deleted_access_rights": 0,
+        }
+
+    deleted_memberships = (
+        db.execute(
+            user_group_association.delete().where(
+                user_group_association.c.group_id.in_(odoo_group_ids)
+            )
+        ).rowcount
+        or 0
+    )
+    deleted_access_rights = (
+        db.query(AccessRight)
+        .filter(AccessRight.group_id.in_(odoo_group_ids))
+        .delete(synchronize_session=False)
+    )
+    deleted_groups = (
+        db.query(SecurityGroup)
+        .filter(SecurityGroup.id.in_(odoo_group_ids))
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+
+    return {
+        "deleted_groups": deleted_groups,
+        "deleted_memberships": deleted_memberships,
+        "deleted_access_rights": deleted_access_rights,
+    }
 
 
 def refresh_group_compliance_flags(group: SecurityGroup) -> None:
@@ -469,6 +581,46 @@ async def update_group(
     return serialize_group(group)
 
 
+@app.post("/api/groups/bulk-update")
+async def bulk_update_groups(
+    payload: BulkGroupUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    """Bulk update documentation/status fields for multiple groups."""
+    groups = (
+        db.query(SecurityGroup)
+        .filter(SecurityGroup.id.in_(payload.group_ids))
+        .all()
+    )
+
+    if not groups:
+        raise HTTPException(status_code=404, detail="No groups found for provided IDs")
+
+    updates = payload.model_dump(exclude={"group_ids"}, exclude_none=True)
+    updated = 0
+
+    for group in groups:
+        if "status" in updates:
+            group.status = updates["status"]
+        if "who_requires" in updates:
+            group.who_requires = updates["who_requires"]
+        if "why_required" in updates:
+            group.why_required = updates["why_required"]
+        if "notes" in updates:
+            group.notes = updates["notes"]
+        if "last_audit_date" in updates:
+            group.last_audit_date = updates["last_audit_date"]
+        if "is_archived" in updates:
+            group.is_archived = bool(updates["is_archived"])
+
+        refresh_group_compliance_flags(group)
+        updated += 1
+
+    db.commit()
+
+    return {"updated": updated}
+
+
 @app.get("/api/users")
 async def get_users(
     skip: int = Query(0, ge=0),
@@ -838,6 +990,52 @@ async def trigger_azure_user_sync(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.get("/api/sync/azure-users/preview")
+async def preview_azure_deletion(db: Session = Depends(get_db)):
+    """Preview what will be deleted when Azure data is removed."""
+    azure_user_ids = [
+        user_id
+        for (user_id,) in db.query(User.id)
+        .filter(or_(User.azure_id.isnot(None), User.source_system == "Azure"))
+        .all()
+    ]
+    
+    if not azure_user_ids:
+        return {
+            "will_delete_users": 0,
+            "will_delete_memberships": 0,
+            "total_users": db.query(User).count(),
+            "total_azure_users": 0,
+        }
+    
+    will_delete_memberships = (
+        db.execute(
+            user_group_association.select().where(
+                user_group_association.c.user_id.in_(azure_user_ids)
+            )
+        ).fetchall()
+    )
+    will_delete_memberships = len(will_delete_memberships) if will_delete_memberships else 0
+    
+    total_users = db.query(User).count()
+    total_azure_users = len(azure_user_ids)
+    
+    return {
+        "will_delete_users": total_azure_users,
+        "will_delete_memberships": will_delete_memberships,
+        "total_users": total_users,
+        "total_azure_users": total_azure_users,
+        "will_remain_users": total_users - total_azure_users,
+    }
+
+
+@app.delete("/api/sync/azure-users")
+async def delete_azure_user_snapshot(db: Session = Depends(get_db)):
+    """Remove Azure-sourced data so a fresh sync can be executed."""
+    stats = reset_azure_directory(db)
+    return {"status": "deleted", **stats}
+
+
 @app.post("/api/sync/odoo-db")
 async def trigger_odoo_db_sync(
     db: Session = Depends(get_db)
@@ -850,6 +1048,65 @@ async def trigger_odoo_db_sync(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.get("/api/sync/odoo-db/preview")
+async def preview_odoo_deletion(db: Session = Depends(get_db)):
+    """Preview what will be deleted when Odoo data is removed."""
+    odoo_group_ids = [
+        group_id
+        for (group_id,) in db.query(SecurityGroup.id)
+        .filter(
+            or_(
+                SecurityGroup.source_system.ilike("Odoo%"),
+                SecurityGroup.odoo_id.isnot(None),
+            )
+        )
+        .all()
+    ]
+    
+    if not odoo_group_ids:
+        return {
+            "will_delete_groups": 0,
+            "will_delete_memberships": 0,
+            "will_delete_access_rights": 0,
+            "total_groups": db.query(SecurityGroup).count(),
+            "total_odoo_groups": 0,
+        }
+    
+    will_delete_memberships = (
+        db.execute(
+            user_group_association.select().where(
+                user_group_association.c.group_id.in_(odoo_group_ids)
+            )
+        ).fetchall()
+    )
+    will_delete_memberships = len(will_delete_memberships) if will_delete_memberships else 0
+    
+    will_delete_access_rights = (
+        db.query(AccessRight)
+        .filter(AccessRight.group_id.in_(odoo_group_ids))
+        .count()
+    )
+    
+    total_groups = db.query(SecurityGroup).count()
+    total_odoo_groups = len(odoo_group_ids)
+    
+    return {
+        "will_delete_groups": total_odoo_groups,
+        "will_delete_memberships": will_delete_memberships,
+        "will_delete_access_rights": will_delete_access_rights,
+        "total_groups": total_groups,
+        "total_odoo_groups": total_odoo_groups,
+        "will_remain_groups": total_groups - total_odoo_groups,
+    }
+
+
+@app.delete("/api/sync/odoo-db")
+async def delete_odoo_sync_data(db: Session = Depends(get_db)):
+    """Remove Odoo-sourced data."""
+    stats = reset_odoo_dataset(db)
+    return {"status": "deleted", **stats}
+
+
 @app.get("/api/sync/status")
 async def get_sync_status(
     sync_type: Optional[str] = None,
@@ -858,7 +1115,11 @@ async def get_sync_status(
 ):
     """Return recent sync run metadata."""
     runs = list_recent_syncs(db, sync_type=sync_type, limit=limit)
-    return {"runs": [serialize_sync_run(run) for run in runs]}
+    serialized = []
+    for idx, run in enumerate(runs):
+        previous_run = runs[idx + 1] if idx + 1 < len(runs) else None
+        serialized.append(serialize_sync_run(run, previous_run=previous_run))
+    return {"runs": serialized}
 
 
 @app.get("/api/stats")
@@ -866,25 +1127,113 @@ async def get_statistics(
     db: Session = Depends(get_db)
 ):
     """Get overall statistics."""
-    groups = db.query(SecurityGroup).all()
-    users = db.query(User).all()
-
-    total_groups = len(groups)
-    documented = sum(1 for g in groups if g.is_documented)
+    total_groups = db.query(func.count(SecurityGroup.id)).scalar() or 0
+    documented = (
+        db.query(func.count(SecurityGroup.id))
+        .filter(SecurityGroup.is_documented.is_(True))
+        .scalar()
+        or 0
+    )
     undocumented = total_groups - documented
-    under_review = sum(1 for g in groups if g.status and "under review" in g.status.lower())
-    confirmed = sum(1 for g in groups if g.status and "confirmed" in g.status.lower())
-    follows_naming = sum(1 for g in groups if g.follows_naming_convention)
+    under_review = (
+        db.query(func.count(SecurityGroup.id))
+        .filter(SecurityGroup.status.ilike("%under review%"))
+        .scalar()
+        or 0
+    )
+    confirmed = (
+        db.query(func.count(SecurityGroup.id))
+        .filter(SecurityGroup.status.ilike("%confirm%"))
+        .scalar()
+        or 0
+    )
+    follows_naming = (
+        db.query(func.count(SecurityGroup.id))
+        .filter(SecurityGroup.follows_naming_convention.is_(True))
+        .scalar()
+        or 0
+    )
+
+    total_users = db.query(func.count(User.id)).scalar() or 0
+
+    orphaned_query = (
+        db.query(SecurityGroup.id, SecurityGroup.name)
+        .outerjoin(
+            user_group_association,
+            SecurityGroup.id == user_group_association.c.group_id,
+        )
+        .group_by(SecurityGroup.id, SecurityGroup.name)
+        .having(func.count(user_group_association.c.user_id) == 0)
+    )
+    orphaned_count = orphaned_query.count()
+    orphaned_samples = orphaned_query.limit(10).all()
+
+    parent_relationships = (
+        db.query(
+            SecurityGroup.id,
+            SecurityGroup.name,
+            func.count(group_inheritance.c.child_id).label("child_count"),
+        )
+        .join(group_inheritance, group_inheritance.c.parent_id == SecurityGroup.id)
+        .group_by(SecurityGroup.id, SecurityGroup.name)
+        .order_by(func.count(group_inheritance.c.child_id).desc())
+        .limit(5)
+        .all()
+    )
+
+    department_summary_rows = (
+        db.query(User.department, func.count(User.id).label("user_count"))
+        .filter(User.department.isnot(None), User.department != "")
+        .group_by(User.department)
+        .order_by(func.count(User.id).desc())
+        .limit(8)
+        .all()
+    )
+
+    department_group_rows = (
+        db.query(
+            User.department,
+            SecurityGroup.name,
+            func.count(user_group_association.c.user_id).label("user_count"),
+        )
+        .join(user_group_association, user_group_association.c.user_id == User.id)
+        .join(SecurityGroup, SecurityGroup.id == user_group_association.c.group_id)
+        .filter(User.department.isnot(None), User.department != "")
+        .group_by(User.department, SecurityGroup.name)
+        .order_by(func.count(user_group_association.c.user_id).desc())
+        .limit(15)
+        .all()
+    )
 
     return {
         "total_groups": total_groups,
-        "total_users": len(users),
+        "total_users": total_users,
         "documented_groups": documented,
         "undocumented_groups": undocumented,
         "under_review": under_review,
         "confirmed": confirmed,
         "follows_naming_convention": follows_naming,
-        "compliance_percentage": round((follows_naming / total_groups * 100) if total_groups > 0 else 0, 2)
+        "compliance_percentage": round((follows_naming / total_groups * 100) if total_groups > 0 else 0, 2),
+        "groups_without_users": orphaned_count,
+        "orphaned_group_samples": [
+            {"id": group_id, "name": name} for group_id, name in orphaned_samples
+        ],
+        "inheritance_highlights": [
+            {"id": group_id, "name": name, "child_count": child_count}
+            for group_id, name, child_count in parent_relationships
+        ],
+        "department_summary": [
+            {"department": dept, "user_count": count}
+            for dept, count in department_summary_rows
+        ],
+        "department_group_matrix": [
+            {
+                "department": dept,
+                "group": group_name,
+                "user_count": user_count,
+            }
+            for dept, group_name, user_count in department_group_rows
+        ],
     }
 
 
@@ -1051,12 +1400,95 @@ async def get_comparison_summary_endpoint(db: Session = Depends(get_db)):
 
 @app.get("/api/comparison/results")
 async def get_comparison_results_endpoint(
-    discrepancy_type: Optional[str] = None,
+    discrepancy_type: Optional[str] = Query(None, description="Filter by discrepancy type"),
+    resolved: Optional[bool] = Query(
+        None, description="Filter by resolution status. true=resolved, false=open."
+    ),
+    search: Optional[str] = Query(None, description="Search by user name or email"),
+    order_by: str = Query(
+        "comparison_date",
+        pattern="^(comparison_date|discrepancy_type|user_name|user_email)$",
+        description="Sort column",
+    ),
+    order_dir: str = Query(
+        "desc",
+        pattern="^(asc|desc)$",
+        description="Sort direction",
+    ),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
     db: Session = Depends(get_db),
 ):
     """Get detailed comparison results."""
-    results = get_comparison_results(db, discrepancy_type)
-    return {"results": results, "count": len(results)}
+    return get_comparison_results(
+        db,
+        discrepancy_type=discrepancy_type,
+        resolved=resolved,
+        search=search,
+        order_by=order_by,
+        order_dir=order_dir,
+        skip=skip,
+        limit=limit,
+    )
+
+
+@app.get("/api/export/comparison")
+async def export_comparison_results(
+    discrepancy_type: Optional[str] = Query(None, description="Filter by discrepancy type"),
+    resolved: Optional[bool] = Query(
+        None, description="Filter by resolution status. true=resolved, false=open."
+    ),
+    search: Optional[str] = Query(None, description="Search by user name or email"),
+    order_by: str = Query(
+        "comparison_date",
+        pattern="^(comparison_date|discrepancy_type|user_name|user_email)$",
+        description="Sort column",
+    ),
+    order_dir: str = Query(
+        "desc",
+        pattern="^(asc|desc)$",
+        description="Sort direction",
+    ),
+    db: Session = Depends(get_db),
+):
+    """Export comparison results to CSV."""
+    data = get_comparison_results(
+        db,
+        discrepancy_type=discrepancy_type,
+        resolved=resolved,
+        search=search,
+        order_by=order_by,
+        order_dir=order_dir,
+        skip=0,
+        limit=None,
+    )
+
+    rows = [
+        [
+            r["id"],
+            r["comparison_date"],
+            r["discrepancy_type"],
+            r["user_name"],
+            r["user_email"],
+            r["azure_value"],
+            r["odoo_value"],
+            "Resolved" if r["resolved"] else "Open",
+        ]
+        for r in data["results"]
+    ]
+
+    headers = [
+        "ID",
+        "Comparison Date",
+        "Type",
+        "User Name",
+        "User Email",
+        "Azure Value",
+        "Odoo Value",
+        "Status",
+    ]
+
+    return create_csv_response(rows, headers, "comparison_results.csv")
 
 
 @app.post("/api/comparison/resolve/{result_id}")
@@ -1081,35 +1513,125 @@ async def get_group_permissions(
     group_id: int,
     db: Session = Depends(get_db),
 ):
-    """Get CRUD permissions for a specific group."""
-    group = db.query(SecurityGroup).filter(SecurityGroup.id == group_id).first()
+    """Get CRUD permissions for a specific group, including inherited rules."""
+    group = (
+        db.query(SecurityGroup)
+        .options(joinedload(SecurityGroup.parent_groups))
+        .filter(SecurityGroup.id == group_id)
+        .first()
+    )
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    permissions = (
+    # Collect all ancestor groups (recursively)
+    parent_map = {}
+
+    def collect_parents(current_group: SecurityGroup):
+        for parent in current_group.parent_groups:
+            if parent.id not in parent_map:
+                parent_map[parent.id] = parent
+                collect_parents(parent)
+
+    collect_parents(group)
+    group_names = {group.id: group.name, **{gid: g.name for gid, g in parent_map.items()}}
+    relevant_ids = [group.id] + list(parent_map.keys())
+
+    access_rights = (
         db.query(AccessRight)
-        .filter(AccessRight.group_id == group_id)
-        .order_by(AccessRight.model_name)
+        .filter(AccessRight.group_id.in_(relevant_ids))
+        .order_by(AccessRight.model_name.asc())
         .all()
     )
+
+    def serialize_access_right(ar: AccessRight) -> dict:
+        return {
+            "id": ar.id,
+            "group_id": ar.group_id,
+            "model_name": ar.model_name,
+            "model_description": ar.model_description,
+            "perm_read": ar.perm_read,
+            "perm_write": ar.perm_write,
+            "perm_create": ar.perm_create,
+            "perm_unlink": ar.perm_unlink,
+            "synced_at": ar.synced_at.isoformat() if ar.synced_at else None,
+            "source_group": {
+                "group_id": ar.group_id,
+                "group_name": group_names.get(ar.group_id, "Unknown"),
+            },
+        }
+
+    direct_permissions = []
+    inherited_permissions = []
+    effective_map = {}
+
+    for ar in access_rights:
+        entry = serialize_access_right(ar)
+        is_inherited = ar.group_id != group.id
+        if is_inherited:
+            entry["inherited_from"] = entry["source_group"]
+            inherited_permissions.append(entry)
+        else:
+            direct_permissions.append(entry)
+
+        key = ar.model_name or f"model:{ar.id}"
+        if key not in effective_map:
+            effective_map[key] = {
+                "model_name": ar.model_name,
+                "model_description": ar.model_description,
+                "perm_create": False,
+                "perm_read": False,
+                "perm_write": False,
+                "perm_unlink": False,
+                "source_groups": [],
+            }
+
+        effective_entry = effective_map[key]
+        effective_entry["model_description"] = (
+            effective_entry["model_description"] or ar.model_description
+        )
+        effective_entry["perm_create"] = effective_entry["perm_create"] or bool(ar.perm_create)
+        effective_entry["perm_read"] = effective_entry["perm_read"] or bool(ar.perm_read)
+        effective_entry["perm_write"] = effective_entry["perm_write"] or bool(ar.perm_write)
+        effective_entry["perm_unlink"] = effective_entry["perm_unlink"] or bool(ar.perm_unlink)
+        effective_entry["source_groups"].append(
+            {
+                "group_id": ar.group_id,
+                "group_name": group_names.get(ar.group_id, "Unknown"),
+                "is_inherited": is_inherited,
+                "perm_create": bool(ar.perm_create),
+                "perm_read": bool(ar.perm_read),
+                "perm_write": bool(ar.perm_write),
+                "perm_unlink": bool(ar.perm_unlink),
+            }
+        )
+
+    effective_permissions = sorted(
+        [
+            {
+                **value,
+                "source_groups": sorted(
+                    value["source_groups"],
+                    key=lambda sg: (sg["is_inherited"], sg["group_name"] or ""),
+                ),
+            }
+            for value in effective_map.values()
+        ],
+        key=lambda item: item["model_name"] or "",
+    )
+
+    summary = {
+        "direct_count": len(direct_permissions),
+        "inherited_count": len(inherited_permissions),
+        "models_covered": len(effective_permissions),
+    }
 
     return {
         "group_id": group_id,
         "group_name": group.name,
-        "permissions": [
-            {
-                "id": p.id,
-                "model_name": p.model_name,
-                "model_description": p.model_description,
-                "perm_read": p.perm_read,
-                "perm_write": p.perm_write,
-                "perm_create": p.perm_create,
-                "perm_unlink": p.perm_unlink,
-                "synced_at": p.synced_at.isoformat() if p.synced_at else None,
-            }
-            for p in permissions
-        ],
-        "total_permissions": len(permissions),
+        "direct_permissions": direct_permissions,
+        "inherited_permissions": inherited_permissions,
+        "effective_permissions": effective_permissions,
+        "summary": summary,
     }
 
 

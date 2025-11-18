@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Dict, List
+from typing import Dict, List, Optional
 
+from sqlalchemy import asc, desc, func, or_
 from sqlalchemy.orm import Session
 
 from app.data.models import User, ComparisonResult
@@ -131,32 +132,79 @@ def _names_similar(name1: str, name2: str) -> bool:
     return False
 
 
-def get_comparison_results(db: Session, discrepancy_type: str = None) -> List[Dict]:
-    """Retrieve comparison results, optionally filtered by type."""
-    query = db.query(ComparisonResult)
-
+def _apply_filters(
+    query,
+    discrepancy_type: Optional[str] = None,
+    resolved: Optional[bool] = None,
+    search: Optional[str] = None,
+):
+    """Apply reusable filters to the base query."""
     if discrepancy_type:
         query = query.filter(ComparisonResult.discrepancy_type == discrepancy_type)
-
-    query = query.order_by(ComparisonResult.discrepancy_type, ComparisonResult.user_name)
-
-    results = []
-    for r in query.all():
-        results.append(
-            {
-                "id": r.id,
-                "comparison_date": r.comparison_date.isoformat() if r.comparison_date else None,
-                "discrepancy_type": r.discrepancy_type,
-                "user_name": r.user_name,
-                "user_email": r.user_email,
-                "azure_value": r.azure_value,
-                "odoo_value": r.odoo_value,
-                "resolved": r.resolved,
-                "notes": r.notes,
-            }
+    if resolved is not None:
+        query = query.filter(ComparisonResult.resolved == resolved)
+    if search:
+        pattern = f"%{search.lower()}%"
+        query = query.filter(
+            or_(
+                func.lower(ComparisonResult.user_name).like(pattern),
+                func.lower(ComparisonResult.user_email).like(pattern),
+                func.lower(ComparisonResult.discrepancy_type).like(pattern),
+            )
         )
+    return query
 
-    return results
+
+def get_comparison_results(
+    db: Session,
+    discrepancy_type: Optional[str] = None,
+    resolved: Optional[bool] = None,
+    search: Optional[str] = None,
+    order_by: str = "comparison_date",
+    order_dir: str = "desc",
+    skip: int = 0,
+    limit: Optional[int] = 500,
+) -> Dict:
+    """Retrieve comparison results with filtering, sorting, and pagination support."""
+    query = db.query(ComparisonResult)
+    query = _apply_filters(query, discrepancy_type=discrepancy_type, resolved=resolved, search=search)
+
+    total = query.count()
+
+    order_map = {
+        "comparison_date": ComparisonResult.comparison_date,
+        "discrepancy_type": ComparisonResult.discrepancy_type,
+        "user_name": ComparisonResult.user_name,
+        "user_email": ComparisonResult.user_email,
+    }
+    order_column = order_map.get(order_by, ComparisonResult.comparison_date)
+    if order_dir == "asc":
+        query = query.order_by(asc(order_column))
+    else:
+        query = query.order_by(desc(order_column))
+
+    if limit is not None:
+        query = query.offset(skip).limit(limit)
+
+    results = [
+        {
+            "id": r.id,
+            "comparison_date": r.comparison_date.isoformat() if r.comparison_date else None,
+            "discrepancy_type": r.discrepancy_type,
+            "user_name": r.user_name,
+            "user_email": r.user_email,
+            "azure_value": r.azure_value,
+            "odoo_value": r.odoo_value,
+            "resolved": r.resolved,
+            "notes": r.notes,
+        }
+        for r in query.all()
+    ]
+
+    return {
+        "total": total,
+        "results": results,
+    }
 
 
 def get_comparison_summary(db: Session) -> Dict:
@@ -191,6 +239,13 @@ def get_comparison_summary(db: Session) -> Dict:
         .count()
     )
 
+    open_count = (
+        db.query(ComparisonResult).filter(ComparisonResult.resolved == False).count()
+    )
+    resolved_count = (
+        db.query(ComparisonResult).filter(ComparisonResult.resolved == True).count()
+    )
+
     return {
         "has_data": True,
         "last_comparison": latest.comparison_date.isoformat(),
@@ -198,6 +253,8 @@ def get_comparison_summary(db: Session) -> Dict:
         "odoo_only": odoo_only,
         "name_mismatches": name_mismatches,
         "total_discrepancies": azure_only + odoo_only + name_mismatches,
+        "open_discrepancies": open_count,
+        "resolved_discrepancies": resolved_count,
     }
 
 

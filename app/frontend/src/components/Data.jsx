@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   Box,
   Typography,
@@ -21,6 +21,11 @@ import {
   ToggleButtonGroup,
   ToggleButton,
   CircularProgress,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  DialogContentText,
 } from '@mui/material'
 import {
   CloudSync as CloudSyncIcon,
@@ -32,6 +37,7 @@ import {
   Settings as SettingsIcon,
 } from '@mui/icons-material'
 import { api } from '../api/client'
+import ConfigurableDataGrid from './common/ConfigurableDataGrid'
 
 const syncDescriptions = {
   azure: [
@@ -51,16 +57,30 @@ const syncDescriptions = {
   ],
 }
 
+const importSummaryColumns = [
+  { field: 'metric', headerName: 'Metric', flex: 1 },
+  { field: 'value', headerName: 'Value', flex: 1 },
+]
+
 function Data() {
   const [azureRun, setAzureRun] = useState(null)
   const [odooRun, setOdooRun] = useState(null)
   const [syncMessage, setSyncMessage] = useState(null)
   const [syncError, setSyncError] = useState(null)
+  const [azureHistory, setAzureHistory] = useState([])
+  const [odooHistory, setOdooHistory] = useState([])
   const [file, setFile] = useState(null)
   const [uploading, setUploading] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importError, setImportError] = useState(null)
   const [exporting, setExporting] = useState(false)
+  const [deletingAzure, setDeletingAzure] = useState(false)
+  const [deletingOdoo, setDeletingOdoo] = useState(false)
+  const [azureDeleteDialogOpen, setAzureDeleteDialogOpen] = useState(false)
+  const [odooDeleteDialogOpen, setOdooDeleteDialogOpen] = useState(false)
+  const [azureDeletePreview, setAzureDeletePreview] = useState(null)
+  const [odooDeletePreview, setOdooDeletePreview] = useState(null)
+  const [loadingPreview, setLoadingPreview] = useState(false)
 
   // Configuration status
   const [configStatus, setConfigStatus] = useState(null)
@@ -74,6 +94,82 @@ function Data() {
     PREPROD: false,
     PROD: false
   })
+
+  const formatStatsSummary = (stats) => {
+    if (!stats) return 'n/a'
+    const parts = []
+    if (stats.processed) parts.push(`Processed ${stats.processed}`)
+    if (stats.groups_processed) parts.push(`Groups ${stats.groups_processed}`)
+    if (stats.created || stats.groups_created || stats.users_created) {
+      const createdTotal = (stats.created || 0) + (stats.groups_created || 0) + (stats.users_created || 0)
+      if (createdTotal) parts.push(`New ${createdTotal}`)
+    }
+    if (stats.updated || stats.groups_updated || stats.users_updated) {
+      const updatedTotal = (stats.updated || 0) + (stats.groups_updated || 0) + (stats.users_updated || 0)
+      if (updatedTotal) parts.push(`Updated ${updatedTotal}`)
+    }
+    if (stats.total_users) parts.push(`Users ${stats.total_users}`)
+    if (stats.total_groups) parts.push(`Groups ${stats.total_groups}`)
+    return parts.slice(0, 4).join(' | ') || 'n/a'
+  }
+
+  const historyColumns = useMemo(
+    () => [
+      {
+        field: 'started_at',
+        headerName: 'Started',
+        flex: 1,
+        valueGetter: (value) =>
+          value ? new Date(value).toLocaleString() : 'Unknown',
+      },
+      {
+        field: 'status',
+        headerName: 'Status',
+        flex: 0.8,
+        renderCell: (params) =>
+          params.value === 'completed' ? (
+            <Chip label="Completed" size="small" color="success" />
+          ) : params.value === 'failed' ? (
+            <Chip label="Failed" size="small" color="error" />
+          ) : (
+            <Chip label={params.value} size="small" />
+          ),
+      },
+      {
+        field: 'stats_text',
+        headerName: 'Stats',
+        flex: 1.3,
+      },
+      {
+        field: 'differences',
+        headerName: 'Change Metrics',
+        flex: 1.5,
+        sortable: false,
+        renderCell: (params) =>
+          params.value && params.value.length ? (
+            <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap' }}>
+              {params.value.slice(0, 3).map((diff) => (
+                <Chip
+                  key={`${params.row.id}-${diff.field}`}
+                  label={`${diff.label}: ${diff.delta > 0 ? '+' : ''}${diff.delta}`}
+                  size="small"
+                />
+              ))}
+            </Stack>
+          ) : (
+            <Typography variant="caption" color="textSecondary">
+              No changes
+            </Typography>
+          ),
+      },
+      {
+        field: 'change_summary',
+        headerName: 'Summary',
+        flex: 1.6,
+      },
+    ],
+    []
+  )
 
   useEffect(() => {
     loadSyncStatus()
@@ -99,11 +195,15 @@ function Data() {
   const loadSyncStatus = async () => {
     try {
       const [azure, odoo] = await Promise.all([
-        api.getSyncStatus({ sync_type: 'azure_users', limit: 1 }),
-        api.getSyncStatus({ sync_type: 'odoo_postgres', limit: 1 }),
+        api.getSyncStatus({ sync_type: 'azure_users', limit: 5 }),
+        api.getSyncStatus({ sync_type: 'odoo_postgres', limit: 5 }),
       ])
-      setAzureRun(azure.data.runs?.[0] || null)
-      setOdooRun(odoo.data.runs?.[0] || null)
+      const azureRuns = azure.data.runs || []
+      const odooRuns = odoo.data.runs || []
+      setAzureRun(azureRuns[0] || null)
+      setOdooRun(odooRuns[0] || null)
+      setAzureHistory(azureRuns)
+      setOdooHistory(odooRuns)
     } catch (err) {
       console.warn('Unable to load sync status', err)
     }
@@ -208,6 +308,24 @@ function Data() {
     return parts.length > 0 ? parts.join(', ') : null
   }
 
+  const azureHistoryRows = useMemo(
+    () =>
+      (azureHistory || []).map((run) => ({
+        ...run,
+        stats_text: formatStatsSummary(run.stats),
+      })),
+    [azureHistory]
+  )
+
+  const odooHistoryRows = useMemo(
+    () =>
+      (odooHistory || []).map((run) => ({
+        ...run,
+        stats_text: formatStatsSummary(run.stats),
+      })),
+    [odooHistory]
+  )
+
   // Color constants for consistency
   const AZURE_COLOR = '#1976d2' // Blue
   const ODOO_COLOR = '#9c27b0' // Light purple (lighter than #7b1fa2)
@@ -233,6 +351,74 @@ function Data() {
       await loadSyncStatus()
     } catch (err) {
       setSyncError(err.response?.data?.detail || err.message || 'Odoo sync failed')
+    }
+  }
+
+  const handleDeleteAzureDataClick = async () => {
+    setLoadingPreview(true)
+    setSyncError(null)
+    try {
+      const preview = await api.previewAzureDeletion()
+      setAzureDeletePreview(preview.data)
+      setAzureDeleteDialogOpen(true)
+    } catch (err) {
+      setSyncError(err.response?.data?.detail || err.message || 'Failed to load deletion preview')
+    } finally {
+      setLoadingPreview(false)
+    }
+  }
+
+  const handleDeleteAzureDataConfirm = async () => {
+    setAzureDeleteDialogOpen(false)
+    setDeletingAzure(true)
+    setSyncError(null)
+    try {
+      const response = await api.deleteAzureData()
+      const deleted = response.data.deleted_users || 0
+      const remaining = (azureDeletePreview?.will_remain_users || 0)
+      setSyncMessage(
+        `Azure data deleted: ${deleted} users removed. ${remaining} users remain (from other sources or manually created).`
+      )
+      await loadSyncStatus()
+      setAzureDeletePreview(null)
+    } catch (err) {
+      setSyncError(err.response?.data?.detail || err.message || 'Azure data deletion failed')
+    } finally {
+      setDeletingAzure(false)
+    }
+  }
+
+  const handleDeleteOdooDataClick = async () => {
+    setLoadingPreview(true)
+    setSyncError(null)
+    try {
+      const preview = await api.previewOdooDeletion()
+      setOdooDeletePreview(preview.data)
+      setOdooDeleteDialogOpen(true)
+    } catch (err) {
+      setSyncError(err.response?.data?.detail || err.message || 'Failed to load deletion preview')
+    } finally {
+      setLoadingPreview(false)
+    }
+  }
+
+  const handleDeleteOdooDataConfirm = async () => {
+    setOdooDeleteDialogOpen(false)
+    setDeletingOdoo(true)
+    setSyncError(null)
+    try {
+      const response = await api.deleteOdooData()
+      const deleted = response.data.deleted_groups || 0
+      const remaining = (odooDeletePreview?.will_remain_groups || 0)
+      setSyncMessage(
+        `Odoo data deleted: ${deleted} groups removed. ${remaining} groups remain (from other sources or manually created).`
+      )
+      await loadSyncStatus()
+      setOdooDeletePreview(null)
+    } catch (err) {
+      setSyncError(err.response?.data?.detail || err.message || 'Odoo data deletion failed')
+    } finally {
+      setDeletingOdoo(false)
     }
   }
 
@@ -536,14 +722,29 @@ function Data() {
                   • {line}
                 </Typography>
               ))}
-              <Button
-                variant="contained"
-                sx={{ mt: 2, bgcolor: AZURE_COLOR, '&:hover': { bgcolor: '#1565c0' } }}
-                onClick={handleAzureSync}
-                disabled={!configStatus?.azure?.configured}
+              <Stack
+                direction={{ xs: 'column', sm: 'row' }}
+                spacing={1.5}
+                sx={{ mt: 2 }}
+                alignItems={{ xs: 'stretch', sm: 'center' }}
               >
-                Sync Azure Directory
-              </Button>
+                <Button
+                  variant="contained"
+                  sx={{ bgcolor: AZURE_COLOR, '&:hover': { bgcolor: '#1565c0' } }}
+                  onClick={handleAzureSync}
+                  disabled={!configStatus?.azure?.configured}
+                >
+                  Sync Azure Directory
+                </Button>
+                <Button
+                  variant="outlined"
+                  color="error"
+                  onClick={handleDeleteAzureDataClick}
+                  disabled={deletingAzure || loadingPreview}
+                >
+                  {deletingAzure ? 'Deleting...' : loadingPreview ? 'Loading...' : 'Delete Azure Data'}
+                </Button>
+              </Stack>
               {!configStatus?.azure?.configured && (
                 <Typography variant="caption" color="error" display="block" sx={{ mt: 1 }}>
                   Configure Azure credentials in .env to enable
@@ -574,6 +775,11 @@ function Data() {
                       {formatStats(azureRun.stats)}
                     </Typography>
                   )}
+                  {azureRun.change_summary && (
+                    <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 0.5 }}>
+                      {azureRun.change_summary}
+                    </Typography>
+                  )}
                   {azureRun.error && (
                     <Alert severity="error" sx={{ mt: 1 }} size="small">
                       {azureRun.error}
@@ -584,6 +790,17 @@ function Data() {
                 <Typography variant="body2" color="textSecondary">
                   No sync runs yet
                 </Typography>
+              )}
+              {azureHistoryRows.length > 0 && (
+                <Box sx={{ mt: 2 }}>
+                  <ConfigurableDataGrid
+                    storageKey="azure-sync-history"
+                    columns={historyColumns}
+                    rows={azureHistoryRows}
+                    height={320}
+                    getRowId={(row) => row.id}
+                  />
+                </Box>
               )}
             </CardContent>
           </Card>
@@ -622,14 +839,29 @@ function Data() {
                   • {line}
                 </Typography>
               ))}
-              <Button
-                variant="contained"
-                sx={{ mt: 2, bgcolor: ODOO_COLOR, '&:hover': { bgcolor: '#7b1fa2' } }}
-                onClick={handleOdooSync}
-                disabled={!configStatus?.odoo?.configured}
+              <Stack
+                direction={{ xs: 'column', sm: 'row' }}
+                spacing={1.5}
+                sx={{ mt: 2 }}
+                alignItems={{ xs: 'stretch', sm: 'center' }}
               >
-                Sync Odoo DB
-              </Button>
+                <Button
+                  variant="contained"
+                  sx={{ bgcolor: ODOO_COLOR, '&:hover': { bgcolor: '#7b1fa2' } }}
+                  onClick={handleOdooSync}
+                  disabled={!configStatus?.odoo?.configured}
+                >
+                  Sync Odoo DB
+                </Button>
+                <Button
+                  variant="outlined"
+                  color="error"
+                  onClick={handleDeleteOdooDataClick}
+                  disabled={deletingOdoo || loadingPreview}
+                >
+                  {deletingOdoo ? 'Deleting...' : loadingPreview ? 'Loading...' : 'Delete Odoo Data'}
+                </Button>
+              </Stack>
               {!configStatus?.odoo?.configured && (
                 <Typography variant="caption" color="error" display="block" sx={{ mt: 1 }}>
                   Configure Odoo DSN in .env to enable
@@ -660,6 +892,11 @@ function Data() {
                       {formatStats(odooRun.stats)}
                     </Typography>
                   )}
+                  {odooRun.change_summary && (
+                    <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 0.5 }}>
+                      {odooRun.change_summary}
+                    </Typography>
+                  )}
                   {odooRun.error && (
                     <Alert severity="error" sx={{ mt: 1 }} size="small">
                       {odooRun.error}
@@ -670,6 +907,17 @@ function Data() {
                 <Typography variant="body2" color="textSecondary">
                   No sync runs yet
                 </Typography>
+              )}
+              {odooHistoryRows.length > 0 && (
+                <Box sx={{ mt: 2 }}>
+                  <ConfigurableDataGrid
+                    storageKey="odoo-sync-history"
+                    columns={historyColumns}
+                    rows={odooHistoryRows}
+                    height={320}
+                    getRowId={(row) => row.id}
+                  />
+                </Box>
               )}
             </CardContent>
           </Card>
@@ -733,30 +981,31 @@ function Data() {
                   <Alert severity="success" sx={{ mb: 2 }}>
                     Import completed successfully!
                   </Alert>
-                  <TableContainer component={Paper}>
-                    <Table size="small">
-                      <TableHead>
-                        <TableRow>
-                          <TableCell>Metric</TableCell>
-                          <TableCell align="right">Value</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        <TableRow>
-                          <TableCell>Groups Imported</TableCell>
-                          <TableCell align="right">{importResult.groups_imported}</TableCell>
-                        </TableRow>
-                        <TableRow>
-                          <TableCell>Groups Created</TableCell>
-                          <TableCell align="right">{importResult.groups_created}</TableCell>
-                        </TableRow>
-                        <TableRow>
-                          <TableCell>Users Created</TableCell>
-                          <TableCell align="right">{importResult.users_created}</TableCell>
-                        </TableRow>
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
+                  <ConfigurableDataGrid
+                    storageKey="import-summary"
+                    columns={importSummaryColumns}
+                    rows={[
+                      {
+                        id: 'groups_imported',
+                        metric: 'Groups Imported',
+                        value: importResult.groups_imported,
+                      },
+                      {
+                        id: 'groups_created',
+                        metric: 'Groups Created',
+                        value: importResult.groups_created,
+                      },
+                      {
+                        id: 'users_created',
+                        metric: 'Users Created',
+                        value: importResult.users_created,
+                      },
+                    ]}
+                    height={220}
+                    disableRowSelectionOnClick
+                    hideFooter
+                    getRowId={(row) => row.id}
+                  />
                 </Box>
               )}
             </CardContent>
@@ -805,6 +1054,109 @@ function Data() {
           </Card>
         </Grid>
       </Grid>
+
+      {/* Azure Delete Confirmation Dialog */}
+      <Dialog
+        open={azureDeleteDialogOpen}
+        onClose={() => setAzureDeleteDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Confirm Delete Azure Data</DialogTitle>
+        <DialogContent>
+          <DialogContentText sx={{ mb: 2 }}>
+            This will permanently delete all users synced from Azure/Entra ID. This action cannot be undone.
+          </DialogContentText>
+          {azureDeletePreview && (
+            <Box>
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 1 }}>
+                  What will be deleted:
+                </Typography>
+                <Typography variant="body2">
+                  • {azureDeletePreview.will_delete_users} users (with Azure ID or source_system = "Azure")
+                </Typography>
+                <Typography variant="body2">
+                  • {azureDeletePreview.will_delete_memberships} group memberships
+                </Typography>
+                <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mt: 2, mb: 1 }}>
+                  What will remain:
+                </Typography>
+                <Typography variant="body2">
+                  • {azureDeletePreview.will_remain_users} users from other sources (Odoo, CSV import, or manually created)
+                </Typography>
+              </Alert>
+              <Typography variant="caption" color="textSecondary">
+                Note: Only users explicitly marked as Azure-sourced will be deleted. Users without azure_id or with a different source_system will remain.
+              </Typography>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setAzureDeleteDialogOpen(false)}>Cancel</Button>
+          <Button
+            onClick={handleDeleteAzureDataConfirm}
+            color="error"
+            variant="contained"
+            disabled={deletingAzure}
+          >
+            {deletingAzure ? 'Deleting...' : 'Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Odoo Delete Confirmation Dialog */}
+      <Dialog
+        open={odooDeleteDialogOpen}
+        onClose={() => setOdooDeleteDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Confirm Delete Odoo Data</DialogTitle>
+        <DialogContent>
+          <DialogContentText sx={{ mb: 2 }}>
+            This will permanently delete all groups synced from Odoo Postgres. This action cannot be undone.
+          </DialogContentText>
+          {odooDeletePreview && (
+            <Box>
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 1 }}>
+                  What will be deleted:
+                </Typography>
+                <Typography variant="body2">
+                  • {odooDeletePreview.will_delete_groups} groups (with Odoo ID or source_system like "Odoo%")
+                </Typography>
+                <Typography variant="body2">
+                  • {odooDeletePreview.will_delete_memberships} group memberships
+                </Typography>
+                <Typography variant="body2">
+                  • {odooDeletePreview.will_delete_access_rights} access rights
+                </Typography>
+                <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mt: 2, mb: 1 }}>
+                  What will remain:
+                </Typography>
+                <Typography variant="body2">
+                  • {odooDeletePreview.will_remain_groups} groups from other sources (Azure, CSV import, or manually created)
+                </Typography>
+              </Alert>
+              <Typography variant="caption" color="textSecondary">
+                Note: Only groups explicitly marked as Odoo-sourced will be deleted. Groups without odoo_id or with a different source_system will remain.
+              </Typography>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOdooDeleteDialogOpen(false)}>Cancel</Button>
+          <Button
+            onClick={handleDeleteOdooDataConfirm}
+            color="error"
+            variant="contained"
+            disabled={deletingOdoo}
+          >
+            {deletingOdoo ? 'Deleting...' : 'Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }

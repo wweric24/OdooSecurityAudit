@@ -16,17 +16,14 @@ import {
   Button,
   Checkbox,
 } from '@mui/material'
-import {
-  DataGrid,
-  GridToolbar,
-  GridActionsCellItem,
-} from '@mui/x-data-grid'
+import { GridActionsCellItem } from '@mui/x-data-grid'
 import {
   Clear as ClearIcon,
   VisibilityOff as HideIcon,
   Visibility as UnhideIcon,
 } from '@mui/icons-material'
 import { api } from '../api/client'
+import ConfigurableDataGrid from './common/ConfigurableDataGrid'
 
 const panelStyle = {
   backgroundColor: '#fff',
@@ -584,23 +581,18 @@ function Users() {
               <CircularProgress />
             </Box>
           ) : rows.length > 0 ? (
-            <DataGrid
-              key={`users-grid-${rows.length}`}
-              rows={rows}
+            <ConfigurableDataGrid
+              storageKey="users-grid"
               columns={columns}
-              loading={false}
-              disableRowSelectionOnClick={true}
-              onRowClick={(params) => {
-                if (params && params.id) {
-                  navigate(`/users/${params.id}`)
-                }
-              }}
+              rows={rows}
+              height={600}
+              checkboxSelection
+              disableRowSelectionOnClick
+              rowSelectionModel={rowSelectionModel}
+              onRowSelectionModelChange={setRowSelectionModel}
               paginationModel={paginationModel}
               onPaginationModelChange={setPaginationModel}
               pageSizeOptions={[25, 50, 100]}
-              hideFooter={true}
-              disableMultipleRowSelection={false}
-              rowHeight={52}
               keepNonExistentRowsSelected={false}
               initialState={{
                 columns: {
@@ -615,30 +607,19 @@ function Users() {
                   },
                 },
               }}
-              slots={{
-                toolbar: GridToolbar,
-              }}
-              componentsProps={{
-                footer: {
-                  sx: { display: 'none' }, // Hide footer to avoid selection state issues
-                },
-              }}
-              slotProps={{
-                toolbar: {
-                  showQuickFilter: false,
-                  printOptions: { disableToolbarButton: true },
-                },
-              }}
+              hideFooter
               getRowId={(row) => {
                 if (!row || typeof row.id === 'undefined') {
                   console.warn('Row missing id:', row)
                   return `temp-${Math.random()}`
                 }
-                return String(row.id)
+                return row.id
               }}
-              disableColumnFilter={false}
-              disableColumnSelector={false}
-              disableDensitySelector={false}
+              onRowClick={(params) => {
+                if (params && params.id) {
+                  navigate(`/users/${params.id}`)
+                }
+              }}
               sx={{
                 '& .MuiDataGrid-row': {
                   cursor: 'pointer',

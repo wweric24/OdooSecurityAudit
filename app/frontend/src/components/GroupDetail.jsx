@@ -27,6 +27,7 @@ import {
   Select,
   MenuItem,
   Stack,
+  Tooltip,
 } from '@mui/material'
 import {
   ArrowBack as ArrowBackIcon,
@@ -41,6 +42,14 @@ const panelStyle = {
   borderRadius: 3,
   p: { xs: 2, md: 3 },
   boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)',
+}
+
+const STATUS_OPTIONS = ['Under Review', 'Confirmed', 'Active', 'Deprecated', 'Legacy']
+const EMPTY_PERMISSIONS = {
+  direct_permissions: [],
+  inherited_permissions: [],
+  effective_permissions: [],
+  summary: {},
 }
 
 function GroupDetail() {
@@ -59,8 +68,9 @@ function GroupDetail() {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
   const [successMessage, setSuccessMessage] = useState(null)
-  const [permissions, setPermissions] = useState([])
+  const [permissions, setPermissions] = useState(EMPTY_PERMISSIONS)
   const [loadingPermissions, setLoadingPermissions] = useState(false)
+  const [validationErrors, setValidationErrors] = useState({})
 
   useEffect(() => {
     loadGroup()
@@ -84,6 +94,7 @@ function GroupDetail() {
         notes: response.data.notes || '',
         last_audit_date: response.data.last_audit_date || '',
       })
+      setValidationErrors({})
       setError(null)
     } catch (err) {
       setError(err.message)
@@ -96,22 +107,44 @@ function GroupDetail() {
     try {
       setLoadingPermissions(true)
       const response = await api.getGroupPermissions(id)
-      setPermissions(response.data.permissions || [])
+      setPermissions({
+        direct_permissions: response.data.direct_permissions || [],
+        inherited_permissions: response.data.inherited_permissions || [],
+        effective_permissions: response.data.effective_permissions || [],
+        summary: response.data.summary || {},
+      })
     } catch (err) {
       console.warn('Unable to load permissions', err)
+      setPermissions(EMPTY_PERMISSIONS)
     } finally {
       setLoadingPermissions(false)
     }
   }
 
   const handleFieldChange = (field) => (event) => {
+    const value = event.target.value
     setFormData((prev) => ({
       ...prev,
-      [field]: event.target.value,
+      [field]: value,
     }))
+    if (validationErrors[field]) {
+      setValidationErrors((prev) => ({ ...prev, [field]: null }))
+    }
   }
 
   const handleSave = async () => {
+    const errors = {}
+    if (!formData.who_requires?.trim()) {
+      errors.who_requires = 'Who Requires Access is required'
+    }
+    if (!formData.why_required?.trim()) {
+      errors.why_required = 'Why Access is Required is required'
+    }
+    if (Object.keys(errors).length) {
+      setValidationErrors(errors)
+      return
+    }
+
     try {
       setSaving(true)
       setSaveError(null)
@@ -126,8 +159,9 @@ function GroupDetail() {
       const response = await api.updateGroup(id, payload)
       setGroup(response.data)
       setSuccessMessage('Group documentation updated')
+      setValidationErrors({})
     } catch (err) {
-      setSaveError(err.message || 'Failed to save changes')
+      setSaveError(err.response?.data?.detail || err.message || 'Failed to save changes')
     } finally {
       setSaving(false)
     }
@@ -144,7 +178,11 @@ function GroupDetail() {
     })
     setSaveError(null)
     setSuccessMessage(null)
+    setValidationErrors({})
   }
+
+  const effectivePermissions = permissions.effective_permissions || []
+  const permissionSummary = permissions.summary || {}
 
   if (loading) {
     return (
@@ -313,9 +351,11 @@ function GroupDetail() {
                   label="Status"
                   onChange={handleFieldChange('status')}
                 >
-                  <MenuItem value="Under Review">Under Review</MenuItem>
-                  <MenuItem value="Confirmed">Confirmed</MenuItem>
-                  <MenuItem value="Deprecated">Deprecated</MenuItem>
+                  {STATUS_OPTIONS.map((status) => (
+                    <MenuItem key={status} value={status}>
+                      {status}
+                    </MenuItem>
+                  ))}
                 </Select>
               </FormControl>
 
@@ -327,7 +367,12 @@ function GroupDetail() {
                 onChange={handleFieldChange('who_requires')}
                 fullWidth
                 sx={{ mb: 2 }}
-                helperText="Specify teams, roles, or users that require this access."
+                required
+                error={Boolean(validationErrors.who_requires)}
+                helperText={
+                  validationErrors.who_requires ||
+                  'Specify teams, roles, or users that require this access.'
+                }
               />
 
               <TextField
@@ -338,7 +383,11 @@ function GroupDetail() {
                 onChange={handleFieldChange('why_required')}
                 fullWidth
                 sx={{ mb: 2 }}
-                helperText="Business justification for access."
+                required
+                error={Boolean(validationErrors.why_required)}
+                helperText={
+                  validationErrors.why_required || 'Business justification for access.'
+                }
               />
 
               <TextField
@@ -484,13 +533,13 @@ function GroupDetail() {
 
         {/* CRUD Permissions Section */}
         <Grid item xs={12}>
-          <Accordion defaultExpanded={permissions.length > 0}>
+          <Accordion defaultExpanded={effectivePermissions.length > 0}>
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
               <Typography variant="h6">
                 Access Rights (CRUD Permissions)
-                {permissions.length > 0 && (
+                {effectivePermissions.length > 0 && (
                   <Chip
-                    label={permissions.length}
+                    label={effectivePermissions.length}
                     size="small"
                     color="primary"
                     sx={{ ml: 1 }}
@@ -503,12 +552,28 @@ function GroupDetail() {
                 <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
                   <CircularProgress size={24} />
                 </Box>
-              ) : permissions.length > 0 ? (
+              ) : effectivePermissions.length > 0 ? (
                 <Box>
                   <Alert severity="info" sx={{ mb: 2 }}>
-                    This group provides access to {permissions.length} model(s). CRUD permissions
-                    show what operations users with this group can perform.
+                    This group provides access to {permissionSummary.models_covered || 0} model(s).
+                    Effective permissions include direct and inherited access rights.
                   </Alert>
+                  <Stack
+                    direction={{ xs: 'column', sm: 'row' }}
+                    spacing={1}
+                    sx={{ mb: 2 }}
+                  >
+                    <Chip
+                      label={`Direct rules: ${permissionSummary.direct_count || 0}`}
+                      color="success"
+                      variant="outlined"
+                    />
+                    <Chip
+                      label={`Inherited rules: ${permissionSummary.inherited_count || 0}`}
+                      color="info"
+                      variant="outlined"
+                    />
+                  </Stack>
                   <TableContainer component={Paper} variant="outlined">
                     <Table size="small">
                       <TableHead>
@@ -519,17 +584,20 @@ function GroupDetail() {
                           <TableCell align="center">Read</TableCell>
                           <TableCell align="center">Update</TableCell>
                           <TableCell align="center">Delete</TableCell>
+                          <TableCell>Sources</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
-                        {permissions.map((perm) => (
-                          <TableRow key={perm.id}>
+                        {effectivePermissions.map((perm, index) => (
+                          <TableRow
+                            key={`${perm.model_name || perm.model_description || 'model'}-${index}`}
+                          >
                             <TableCell>
                               <Typography
                                 variant="body2"
                                 sx={{ fontFamily: 'monospace', fontSize: '0.85rem' }}
                               >
-                                {perm.model_name}
+                                {perm.model_name || 'Unknown'}
                               </Typography>
                             </TableCell>
                             <TableCell>
@@ -564,6 +632,29 @@ function GroupDetail() {
                               ) : (
                                 <CloseIcon color="disabled" fontSize="small" />
                               )}
+                            </TableCell>
+                            <TableCell>
+                              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                                {perm.source_groups.map((source, index) => {
+                                  const label = source.is_inherited
+                                    ? `Inherited: ${source.group_name || 'Parent'}`
+                                    : 'Direct'
+                                  const tooltip = `Create: ${
+                                    source.perm_create ? 'Yes' : 'No'
+                                  } | Read: ${source.perm_read ? 'Yes' : 'No'} | Update: ${
+                                    source.perm_write ? 'Yes' : 'No'
+                                  } | Delete: ${source.perm_unlink ? 'Yes' : 'No'}`
+                                  return (
+                                    <Tooltip key={`${source.group_id}-${index}`} title={tooltip}>
+                                      <Chip
+                                        size="small"
+                                        label={label}
+                                        color={source.is_inherited ? 'info' : 'success'}
+                                      />
+                                    </Tooltip>
+                                  )
+                                })}
+                              </Box>
                             </TableCell>
                           </TableRow>
                         ))}

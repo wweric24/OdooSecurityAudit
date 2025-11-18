@@ -9,6 +9,7 @@ import {
   Alert,
 } from '@mui/material'
 import { api } from '../api/client'
+import ConfigurableDataGrid from './common/ConfigurableDataGrid'
 
 const panelStyle = {
   backgroundColor: '#fff',
@@ -72,6 +73,30 @@ function Dashboard() {
       </CardContent>
     </Card>
   )
+
+  const matrixRows = (stats.department_group_matrix || []).map((row, index) => ({
+    id: `${row.department || 'Unknown'}-${row.group}-${index}`,
+    department: row.department || 'Unassigned',
+    group: row.group,
+    user_count: row.user_count,
+  }))
+
+  const inheritanceRows = (stats.inheritance_highlights || []).map((row) => ({
+    id: row.id,
+    name: row.name,
+    child_count: row.child_count,
+  }))
+
+  const matrixColumns = [
+    { field: 'department', headerName: 'Department', flex: 1 },
+    { field: 'group', headerName: 'Group', flex: 1.2 },
+    { field: 'user_count', headerName: 'Users', width: 140 },
+  ]
+
+  const inheritanceColumns = [
+    { field: 'name', headerName: 'Group', flex: 1.2 },
+    { field: 'child_count', headerName: 'Child Groups', width: 150 },
+  ]
 
   return (
     <Box>
@@ -145,6 +170,68 @@ function Dashboard() {
                   Under Review: <strong>{stats.under_review}</strong>
                 </Typography>
               </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Department Access Matrix
+              </Typography>
+              <Typography variant="body2" color="textSecondary" sx={{ mb: 1 }}>
+                Top department/group combinations by user count.
+              </Typography>
+              {stats.department_summary && stats.department_summary.length > 0 && (
+                <Typography variant="caption" color="textSecondary" display="block" sx={{ mb: 1 }}>
+                  Active departments: {stats.department_summary.length}
+                </Typography>
+              )}
+              {matrixRows.length > 0 ? (
+                <ConfigurableDataGrid
+                  storageKey="dashboard-dept-matrix"
+                  columns={matrixColumns}
+                  rows={matrixRows}
+                  height={360}
+                />
+              ) : (
+                <Typography variant="body2" color="textSecondary">
+                  No department/group data available yet.
+                </Typography>
+              )}
+            </CardContent>
+          </Card>
+        </Grid>
+
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Risk & Inheritance Highlights
+              </Typography>
+              <Box sx={{ mt: 1, mb: 2 }}>
+                <Typography variant="body1">
+                  Groups without users: <strong>{stats.groups_without_users || 0}</strong>
+                </Typography>
+                {stats.orphaned_group_samples && stats.orphaned_group_samples.length > 0 && (
+                  <Typography variant="caption" color="textSecondary">
+                    Examples: {stats.orphaned_group_samples.map((g) => g.name).join(', ')}
+                  </Typography>
+                )}
+              </Box>
+              {inheritanceRows.length > 0 ? (
+                <ConfigurableDataGrid
+                  storageKey="dashboard-inheritance"
+                  columns={inheritanceColumns}
+                  rows={inheritanceRows}
+                  height={360}
+                />
+              ) : (
+                <Typography variant="body2" color="textSecondary">
+                  No inheritance data captured yet.
+                </Typography>
+              )}
             </CardContent>
           </Card>
         </Grid>

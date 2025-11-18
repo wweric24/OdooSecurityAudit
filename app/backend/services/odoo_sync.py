@@ -6,15 +6,33 @@ from datetime import datetime, timezone
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import psycopg
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.backend.services.sync_runs import create_sync_run, complete_sync_run
 from app.backend.settings import settings
 from app.data.csv_parser import CSVParser
-from app.data.models import SecurityGroup, User, AccessRight
+from app.data.models import SecurityGroup, User, AccessRight, user_group_association
 
 parser = CSVParser()
+
+
+def _normalize_translated_value(value):
+    """Handle Odoo translated/json fields and binary text."""
+    if isinstance(value, dict):
+        return next(iter(value.values())) if value else None
+    if isinstance(value, memoryview):
+        try:
+            value = value.tobytes()
+        except Exception:
+            value = bytes(value)
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            return value.decode("utf-8")
+        except Exception:
+            return value.decode("latin-1", errors="ignore")
+    return value
 
 
 def _load_mock_payload() -> Dict:
@@ -36,23 +54,41 @@ def _fetch_from_postgres() -> Dict:
 
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
+            category_map = {}
+            try:
+                cur.execute(
+                    "SELECT id, name FROM ir_module_category ORDER BY id"
+                )
+                for row in cur.fetchall():
+                    category_name = _normalize_translated_value(row[1])
+                    if isinstance(category_name, str):
+                        category_name = category_name.strip()
+                    category_map[row[0]] = category_name
+            except Exception:
+                category_map = {}
+
             cur.execute(
                 "SELECT id, name, category_id, write_date FROM res_groups ORDER BY id"
             )
             groups = []
             for row in cur.fetchall():
                 # Handle translated fields - Odoo stores them as JSON/dict (e.g., {'en_US': 'Internal User'})
-                name = row[1]
-                if isinstance(name, dict):
-                    # Extract the first value from the translation dict, or use a fallback
-                    name = next(iter(name.values())) if name else None
-                elif name is None:
-                    name = None
-                
+                name = _normalize_translated_value(row[1])
+                if isinstance(name, str):
+                    name = name.strip()
+
+                category_id = row[2]
+                application = category_map.get(category_id)
+                if isinstance(application, str):
+                    application = application.strip()
+
                 groups.append({
                     "id": row[0],
                     "name": name,
-                    "category_id": row[2],
+                    "category_id": category_id,
+                    "category_name": application,
+                    "application": application,
+                    "module_name": application,
                     "write_date": row[3].isoformat() if row[3] else None,
                 })
 
@@ -238,6 +274,19 @@ def _upsert_groups(db: Session, payload: Dict) -> Dict[str, int]:
             if not name:
                 continue
 
+            application_name = (
+                record.get("application")
+                or record.get("module_name")
+                or record.get("category_name")
+            )
+            if isinstance(application_name, str):
+                application_name = application_name.strip() or None
+
+            parsed_module, parsed_access_level, parsed_hierarchy_level = parser.extract_module_and_access_level(name)
+            module_value = application_name or parsed_module
+            access_level_value = record.get("access_level") or parsed_access_level
+            hierarchy_level_value = record.get("hierarchy_level") or parsed_hierarchy_level
+
             group = None
             # First try to find by odoo_id (most reliable)
             if gid:
@@ -249,12 +298,12 @@ def _upsert_groups(db: Session, payload: Dict) -> Dict[str, int]:
             if not group:
                 # Try to create new group
                 try:
-                    module, access_level, hierarchy_level = parser.extract_module_and_access_level(name)
                     group = SecurityGroup(
                         name=name,
-                        module=module,
-                        access_level=access_level,
-                        hierarchy_level=hierarchy_level,
+                        module=module_value,
+                        category=application_name,
+                        access_level=access_level_value,
+                        hierarchy_level=hierarchy_level_value,
                         status="Under Review",
                     )
                     db.add(group)
@@ -279,6 +328,15 @@ def _upsert_groups(db: Session, payload: Dict) -> Dict[str, int]:
             env_display = settings.odoo_environment_display
             group.source_system = f"Odoo ({env_display})"
             group.synced_from_postgres_at = now
+            if application_name:
+                group.module = application_name
+                group.category = application_name
+            elif module_value and not group.module:
+                group.module = module_value
+            if access_level_value and not group.access_level:
+                group.access_level = access_level_value
+            if hierarchy_level_value is not None and group.hierarchy_level is None:
+                group.hierarchy_level = hierarchy_level_value
             group_lookup[gid] = group
 
         # Process users
@@ -425,6 +483,17 @@ def _upsert_groups(db: Session, payload: Dict) -> Dict[str, int]:
         db.rollback()
         raise
 
+    total_groups = db.query(SecurityGroup).count()
+    documented_groups = db.query(SecurityGroup).filter(SecurityGroup.is_documented.is_(True)).count()
+    total_access_rights = db.query(AccessRight).count()
+    orphaned_groups = (
+        db.query(SecurityGroup)
+        .outerjoin(user_group_association, SecurityGroup.id == user_group_association.c.group_id)
+        .group_by(SecurityGroup.id)
+        .having(func.count(user_group_association.c.user_id) == 0)
+        .count()
+    )
+
     return {
         "groups_processed": len(payload.get("groups", [])),
         "users_processed": len(payload.get("users", [])),
@@ -434,6 +503,10 @@ def _upsert_groups(db: Session, payload: Dict) -> Dict[str, int]:
         "users_updated": users_updated,
         "access_rights_synced": len(payload.get("access_rights", [])),
         "access_rights_created": access_rights_created,
+        "total_groups": total_groups,
+        "documented_groups": documented_groups,
+        "total_access_rights": total_access_rights,
+        "orphaned_groups": orphaned_groups,
     }
 
 

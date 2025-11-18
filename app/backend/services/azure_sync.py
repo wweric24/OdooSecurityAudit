@@ -103,7 +103,17 @@ def _upsert_users(db: Session, users: Iterable[Dict]) -> Dict[str, int]:
         db.add(user)
 
     db.commit()
-    return {"processed": processed, "created": created, "updated": updated}
+
+    azure_users_total = db.query(User).filter(User.azure_id.isnot(None)).count()
+    total_users = db.query(User).count()
+
+    return {
+        "processed": processed,
+        "created": created,
+        "updated": updated,
+        "azure_users_total": azure_users_total,
+        "total_users": total_users,
+    }
 
 
 def sync_azure_users(db: Session) -> Dict:

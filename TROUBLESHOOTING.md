@@ -1,5 +1,54 @@
 # Troubleshooting Guide
 
+## Odoo PostgreSQL Sync Issues
+
+### Issue: "invalid connection option 'postgresql+psycopg://'"
+**Problem:** `psycopg.connect()` doesn't accept SQLAlchemy's connection string format  
+**Solution:** The code now automatically converts `postgresql+psycopg://` to `postgresql://`  
+**Status:** ✅ Fixed in `app/backend/services/odoo_sync.py`
+
+### Issue: "column 'name' does not exist" in res_users
+**Problem:** Odoo database doesn't have `name` column in `res_users` table  
+**Solution:** Code now checks for column existence and uses `login` as fallback  
+**Status:** ✅ Fixed - automatically detects and handles missing name column
+
+### Issue: "column 'parent_id' does not exist" in res_groups_implied_rel
+**Problem:** Column names vary by Odoo version (e.g., `gid`/`hid` vs `parent_id`/`child_id`)  
+**Solution:** Dynamic column name discovery using `information_schema`  
+**Status:** ✅ Fixed - automatically detects actual column names
+
+### Issue: "UNIQUE constraint failed: security_groups.name"
+**Problem:** Group already exists from previous sync/import  
+**Solution:** Added IntegrityError handling with rollback and retry logic  
+**Status:** ✅ Fixed - gracefully handles existing groups
+
+### Issue: "type 'dict' is not supported" when inserting groups
+**Problem:** Odoo stores translated fields as JSON/dictionaries  
+**Solution:** Code extracts string value from translation dictionaries  
+**Status:** ✅ Fixed - handles `{'en_US': 'Internal User'}` format
+
+### Issue: "type object 'AccessRight' has no attribute 'odoo_access_id'"
+**Problem:** AccessRight model missing fields used by sync code  
+**Solution:** Added missing fields: `odoo_access_id`, `model_description`, `perm_*` fields, `synced_at`  
+**Status:** ✅ Fixed - model updated with all required fields
+
+### Database Connection Issues
+
+**Connection String Format:**
+```
+ODOO_PREPROD_DSN=postgresql+psycopg://uav:PASSWORD@10.11.99.172:5432/Crew_Acceptance_Testing?sslmode=prefer
+```
+
+**Common Errors:**
+- "no pg_hba.conf entry": Server admin needs to add your IP to `pg_hba.conf`
+- "password authentication failed": Verify password in `.env` file
+- "database does not exist": Check database name (case-sensitive, may need quotes)
+
+**Testing Connection:**
+See `diagnose_odoo_schema.sql` for diagnostic queries to run on the PostgreSQL server.
+
+---
+
 ## Servers Not Showing in Browser
 
 If you can't see the application in your browser, try these steps:

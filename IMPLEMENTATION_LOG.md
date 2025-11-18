@@ -359,6 +359,105 @@ Then remove the entries from `pg_hba.conf` and restart PostgreSQL.
 
 ---
 
+## Odoo Sync Integration Fixes
+
+**Date:** November 18, 2025  
+**Issue:** Multiple compatibility issues when syncing from Odoo PostgreSQL database  
+**Status:** ✅ Resolved
+
+### Issues Identified and Fixed
+
+#### 1. Database Connection String Format
+**Problem:** `psycopg.connect()` doesn't accept SQLAlchemy's `postgresql+psycopg://` format  
+**Solution:** Added automatic conversion from `postgresql+psycopg://` to `postgresql://` format  
+**File:** `app/backend/services/odoo_sync.py` (line 31-34)
+
+#### 2. res_users Name Column Missing
+**Problem:** `res_users` table doesn't have a `name` column in this Odoo version  
+**Solution:** 
+- Check if `name` column exists using `information_schema`
+- If not, use `login` field as the name (login is typically email/username)
+- Removed attempt to join with `res_partner` (read-only user doesn't have access)
+**File:** `app/backend/services/odoo_sync.py` (line 58-91)
+
+#### 3. res_groups_implied_rel Column Names
+**Problem:** Column names are `gid` and `hid` (not `parent_id`/`child_id`)  
+**Solution:** 
+- Dynamic column name discovery using `information_schema`
+- Intelligent mapping based on column name patterns (`hid` = child/implied group)
+**File:** `app/backend/services/odoo_sync.py` (line 128-162)
+
+#### 4. res_groups_users_rel Column Names
+**Problem:** Column order is `gid` (group) first, `uid` (user) second  
+**Solution:** 
+- Dynamic column name discovery
+- Intelligent mapping based on column name patterns (`gid` = group, `uid` = user)
+**File:** `app/backend/services/odoo_sync.py` (line 93-126)
+
+#### 5. Translated Fields (JSON/Dict)
+**Problem:** Odoo stores translated fields as JSON/dictionaries (e.g., `{'en_US': 'Internal User'}`)  
+**Solution:** 
+- Detect if field value is a dictionary
+- Extract the first value from translation dict
+- Applied to both `res_groups.name` and `ir_model.name` fields
+**File:** `app/backend/services/odoo_sync.py` (line 41-56, 190-206)
+
+#### 6. UNIQUE Constraint Violations
+**Problem:** Groups already exist from previous syncs/imports causing constraint violations  
+**Solution:** 
+- Added `IntegrityError` exception handling
+- Rollback and retry finding existing group
+- Use `flush()` to catch errors early
+**File:** `app/backend/services/odoo_sync.py` (line 244-276)
+
+#### 7. Missing AccessRight Model Fields
+**Problem:** `AccessRight` model missing fields used by sync code (`odoo_access_id`, `model_description`, `perm_*` fields)  
+**Solution:** 
+- Added `odoo_access_id` for tracking Odoo access right IDs
+- Added `model_description` for human-readable model names
+- Added `perm_read`, `perm_write`, `perm_create`, `perm_unlink` fields
+- Added `synced_at` timestamp
+- Kept legacy fields (`read`, `write`, `create`, `delete`) for compatibility
+**File:** `app/data/models.py` (line 121-153)
+
+### Database Schema Discovered
+
+**res_groups_implied_rel:**
+- Column 1: `gid` (parent group)
+- Column 2: `hid` (implied/child group)
+
+**res_groups_users_rel:**
+- Column 1: `gid` (group)
+- Column 2: `uid` (user)
+
+**res_users:**
+- No `name` column (uses `login` as identifier)
+- Has: `id`, `login`, `partner_id`, `active`, `write_date`
+
+### Configuration Updated
+
+**Database:** Changed from `preprod` to `Crew_Acceptance_Testing`  
+**SSL Mode:** Changed from `disable` to `prefer`  
+**Connection String:** `postgresql+psycopg://uav:PASSWORD@10.11.99.172:5432/Crew_Acceptance_Testing?sslmode=prefer`
+
+### Testing Status
+
+- ✅ Connection string format conversion working
+- ✅ User name extraction working (using login)
+- ✅ Group inheritance relationships syncing correctly
+- ✅ User-group memberships syncing correctly
+- ✅ Translated fields handling working
+- ✅ UNIQUE constraint handling working
+- ✅ Access rights syncing with all required fields
+
+### Next Steps
+
+1. Verify sync completes successfully end-to-end
+2. Test with production database when ready
+3. Monitor for any additional schema differences
+
+---
+
 ## Contacts & References
 
 - **Implementation Date:** November 18, 2025

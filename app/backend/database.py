@@ -61,6 +61,25 @@ def ensure_additional_columns(db_engine: Engine):
         if "last_seen_in_azure_at" not in user_column_names:
             conn.execute(text("ALTER TABLE users ADD COLUMN last_seen_in_azure_at DATETIME"))
 
+        # Access rights table columns
+        access_rights_columns = inspector.get_columns("access_rights") if inspector.has_table("access_rights") else []
+        access_rights_column_names = {col["name"] for col in access_rights_columns}
+        
+        if "model_description" not in access_rights_column_names:
+            conn.execute(text("ALTER TABLE access_rights ADD COLUMN model_description VARCHAR(255)"))
+        if "odoo_access_id" not in access_rights_column_names:
+            conn.execute(text("ALTER TABLE access_rights ADD COLUMN odoo_access_id INTEGER"))
+        if "perm_read" not in access_rights_column_names:
+            conn.execute(text("ALTER TABLE access_rights ADD COLUMN perm_read BOOLEAN DEFAULT 0"))
+        if "perm_write" not in access_rights_column_names:
+            conn.execute(text("ALTER TABLE access_rights ADD COLUMN perm_write BOOLEAN DEFAULT 0"))
+        if "perm_create" not in access_rights_column_names:
+            conn.execute(text("ALTER TABLE access_rights ADD COLUMN perm_create BOOLEAN DEFAULT 0"))
+        if "perm_unlink" not in access_rights_column_names:
+            conn.execute(text("ALTER TABLE access_rights ADD COLUMN perm_unlink BOOLEAN DEFAULT 0"))
+        if "synced_at" not in access_rights_column_names:
+            conn.execute(text("ALTER TABLE access_rights ADD COLUMN synced_at DATETIME"))
+
 
 def get_db() -> Session:
     """Get database session."""

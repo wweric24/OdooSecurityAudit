@@ -61,6 +61,15 @@ This project tracker monitors the progress of the Odoo Security Framework Review
   - Documentation gaps analysis
   - Missing field tracking
 
+- [x] **External Data Integration** (November 2025)
+  - Odoo PostgreSQL sync integration
+    - Dynamic schema detection for different Odoo versions
+    - Handles translated fields (JSON/dict)
+    - Automatic column name mapping
+    - UNIQUE constraint handling
+  - Azure AD sync integration
+  - User comparison service (Azure vs Odoo)
+
 - [x] **Backend API**
   - FastAPI REST API
   - All core endpoints
@@ -490,7 +499,12 @@ This project tracker monitors the progress of the Odoo Security Framework Review
 | Date | Change | Author |
 |------|--------|--------|
 | December 2024 | Initial project tracker created | AI Assistant |
-| | | |
+| November 18, 2025 | Fixed Odoo PostgreSQL sync integration - resolved 7 compatibility issues | AI Assistant |
+| November 18, 2025 | Added missing AccessRight model fields (odoo_access_id, model_description, perm_* fields) | AI Assistant |
+| November 18, 2025 | Implemented dynamic column name discovery for Odoo relationship tables | AI Assistant |
+| November 18, 2025 | Added translated field handling for Odoo JSON/dict fields | AI Assistant |
+| November 18, 2025 | Fixed UNIQUE constraint violation handling in group upsert logic | AI Assistant |
+| November 18, 2025 | Updated database connection to Crew_Acceptance_Testing with sslmode=prefer | AI Assistant | |
 
 ---
 

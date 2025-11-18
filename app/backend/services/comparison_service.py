@@ -21,8 +21,8 @@ def run_user_comparison(db: Session) -> Dict:
     db.query(ComparisonResult).delete()
     db.commit()
 
-    # Get all users
-    all_users = db.query(User).all()
+    # Get all users (excluding hidden users - not related to Odoo's active/archived status)
+    all_users = db.query(User).filter(User.is_hidden == False).all()
 
     # Categorize users by source
     azure_users = {}  # email -> user

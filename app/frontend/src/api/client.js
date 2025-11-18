@@ -59,6 +59,14 @@ export const api = {
     })
   },
 
+  hideUsers: (userIds) => {
+    return client.post('/api/users/hide', { user_ids: userIds })
+  },
+
+  unhideUsers: (userIds) => {
+    return client.post('/api/users/unhide', { user_ids: userIds })
+  },
+
   // Inheritance
   getInheritance: () => {
     return client.get('/api/inheritance')
@@ -143,8 +151,8 @@ export const api = {
     return client.get('/api/departments')
   },
 
-  getUsersByDepartment: (department) => {
-    return client.get('/api/users/by-department', { params: { department } })
+  getUsersByDepartment: (department, params = {}) => {
+    return client.get('/api/users/by-department', { params: { department, ...params } })
   },
 }
 

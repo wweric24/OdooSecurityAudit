@@ -474,14 +474,19 @@ async def get_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     search: Optional[str] = None,
+    include_hidden: bool = Query(False, description="Include hidden users"),
     db: Session = Depends(get_db)
 ):
     """Get list of users with their group assignments."""
     query = db.query(User)
-    
+
+    # By default, exclude hidden users
+    if not include_hidden:
+        query = query.filter(User.is_hidden == False)
+
     if search:
         query = query.filter(User.name.contains(search))
-    
+
     total = query.count()
     users = query.offset(skip).limit(limit).all()
     
@@ -499,11 +504,75 @@ async def get_users(
                 "azure_id": u.azure_id,
                 "odoo_user_id": u.odoo_user_id,
                 "last_seen_in_azure_at": u.last_seen_in_azure_at.isoformat() if u.last_seen_in_azure_at else None,
+                "is_hidden": u.is_hidden,
                 "group_count": len(u.groups),
                 "groups": [{"id": g.id, "name": g.name} for g in u.groups]
             }
             for u in users
         ]
+    }
+
+
+class HideUsersRequest(BaseModel):
+    """Request body for hiding/unhiding users."""
+    user_ids: list[int]
+
+
+@app.post("/api/users/hide")
+async def hide_users(
+    request: HideUsersRequest,
+    db: Session = Depends(get_db)
+):
+    """Hide multiple users from views and comparisons."""
+    if not request.user_ids:
+        raise HTTPException(status_code=400, detail="No user IDs provided")
+
+    users = db.query(User).filter(User.id.in_(request.user_ids)).all()
+
+    if not users:
+        raise HTTPException(status_code=404, detail="No users found with provided IDs")
+
+    hidden_count = 0
+    for user in users:
+        if not user.is_hidden:
+            user.is_hidden = True
+            hidden_count += 1
+
+    db.commit()
+
+    return {
+        "success": True,
+        "hidden_count": hidden_count,
+        "total_selected": len(request.user_ids)
+    }
+
+
+@app.post("/api/users/unhide")
+async def unhide_users(
+    request: HideUsersRequest,
+    db: Session = Depends(get_db)
+):
+    """Unhide multiple users (restore to visible)."""
+    if not request.user_ids:
+        raise HTTPException(status_code=400, detail="No user IDs provided")
+
+    users = db.query(User).filter(User.id.in_(request.user_ids)).all()
+
+    if not users:
+        raise HTTPException(status_code=404, detail="No users found with provided IDs")
+
+    unhidden_count = 0
+    for user in users:
+        if user.is_hidden:
+            user.is_hidden = False
+            unhidden_count += 1
+
+    db.commit()
+
+    return {
+        "success": True,
+        "unhidden_count": unhidden_count,
+        "total_selected": len(request.user_ids)
     }
 
 
@@ -1024,12 +1093,18 @@ async def get_departments(db: Session = Depends(get_db)):
 @app.get("/api/users/by-department")
 async def get_users_by_department(
     department: str = Query(..., min_length=1),
+    include_hidden: bool = Query(False, description="Include hidden users"),
     db: Session = Depends(get_db),
 ):
     """Get users filtered by department with their group assignments."""
+    query = db.query(User).filter(User.department == department)
+
+    # By default, exclude hidden users
+    if not include_hidden:
+        query = query.filter(User.is_hidden == False)
+
     users = (
-        db.query(User)
-        .filter(User.department == department)
+        query
         .options(joinedload(User.groups))
         .order_by(User.name)
         .all()
@@ -1044,6 +1119,7 @@ async def get_users_by_department(
                 "email": u.email,
                 "azure_id": u.azure_id,
                 "odoo_user_id": u.odoo_user_id,
+                "is_hidden": u.is_hidden,
                 "group_count": len(u.groups),
                 "groups": [{"id": g.id, "name": g.name, "module": g.module} for g in u.groups],
             }

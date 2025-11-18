@@ -20,8 +20,15 @@ import {
   Select,
   MenuItem,
   Button,
+  Checkbox,
+  IconButton,
+  Toolbar,
 } from '@mui/material'
-import { Clear as ClearIcon } from '@mui/icons-material'
+import {
+  Clear as ClearIcon,
+  VisibilityOff as HideIcon,
+  Visibility as UnhideIcon,
+} from '@mui/icons-material'
 import { api } from '../api/client'
 
 const panelStyle = {
@@ -41,6 +48,9 @@ function Users() {
   const [selectedDepartment, setSelectedDepartment] = useState('')
   const [sourceFilter, setSourceFilter] = useState('')  // 'Azure', 'Odoo', or ''
   const [emailFilter, setEmailFilter] = useState('')
+  const [selectedUsers, setSelectedUsers] = useState([])
+  const [showHidden, setShowHidden] = useState(false)
+  const [actionSuccess, setActionSuccess] = useState(null)
 
   useEffect(() => {
     loadDepartments()
@@ -48,7 +58,7 @@ function Users() {
 
   useEffect(() => {
     loadUsers()
-  }, [search, selectedDepartment, sourceFilter, emailFilter])
+  }, [search, selectedDepartment, sourceFilter, emailFilter, showHidden])
 
   const loadDepartments = async () => {
     try {
@@ -65,7 +75,7 @@ function Users() {
 
       if (selectedDepartment) {
         // Use department-specific endpoint
-        const response = await api.getUsersByDepartment(selectedDepartment)
+        const response = await api.getUsersByDepartment(selectedDepartment, { include_hidden: showHidden })
         let filteredUsers = response.data.users
 
         // Apply client-side filters
@@ -89,7 +99,7 @@ function Users() {
         setUsers(filteredUsers)
       } else {
         // Use general users endpoint with all filters
-        const params = {}
+        const params = { include_hidden: showHidden }
         if (search) params.search = search
         const response = await api.getUsers(params)
         let filteredUsers = response.data.users
@@ -110,6 +120,7 @@ function Users() {
         setUsers(filteredUsers)
       }
       setError(null)
+      setSelectedUsers([]) // Clear selection when data refreshes
     } catch (err) {
       setError(err.message)
     } finally {
@@ -122,6 +133,48 @@ function Users() {
     setSelectedDepartment('')
     setSourceFilter('')
     setEmailFilter('')
+  }
+
+  const handleSelectAll = (event) => {
+    if (event.target.checked) {
+      setSelectedUsers(users.map(u => u.id))
+    } else {
+      setSelectedUsers([])
+    }
+  }
+
+  const handleSelectUser = (userId) => {
+    setSelectedUsers(prev => {
+      if (prev.includes(userId)) {
+        return prev.filter(id => id !== userId)
+      } else {
+        return [...prev, userId]
+      }
+    })
+  }
+
+  const handleHide = async () => {
+    try {
+      setError(null)
+      const response = await api.hideUsers(selectedUsers)
+      setActionSuccess(`Successfully hid ${response.data.hidden_count} user(s)`)
+      setTimeout(() => setActionSuccess(null), 3000)
+      loadUsers()
+    } catch (err) {
+      setError(err.response?.data?.detail || err.message || 'Failed to hide users')
+    }
+  }
+
+  const handleUnhide = async () => {
+    try {
+      setError(null)
+      const response = await api.unhideUsers(selectedUsers)
+      setActionSuccess(`Successfully unhid ${response.data.unhidden_count} user(s)`)
+      setTimeout(() => setActionSuccess(null), 3000)
+      loadUsers()
+    } catch (err) {
+      setError(err.response?.data?.detail || err.message || 'Failed to unhide users')
+    }
   }
 
   if (loading && users.length === 0) {
@@ -142,6 +195,17 @@ function Users() {
         sx={{ mb: 2 }}
       >
         <Typography variant="h4">Users</Typography>
+        <FormControl sx={{ minWidth: 180 }} size="small">
+          <InputLabel>View</InputLabel>
+          <Select
+            value={showHidden ? 'hidden' : 'visible'}
+            label="View"
+            onChange={(e) => setShowHidden(e.target.value === 'hidden')}
+          >
+            <MenuItem value="visible">Visible Users</MenuItem>
+            <MenuItem value="hidden">Hidden Users</MenuItem>
+          </Select>
+        </FormControl>
       </Stack>
 
       <Box sx={panelStyle}>
@@ -209,15 +273,60 @@ function Users() {
           </Alert>
         )}
 
+        {actionSuccess && (
+          <Alert severity="success" sx={{ mb: 2 }}>
+            {actionSuccess}
+          </Alert>
+        )}
+
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
             {error}
           </Alert>
         )}
+
+        {selectedUsers.length > 0 && (
+          <Paper sx={{ mb: 2, p: 1, bgcolor: '#f5f5f5' }}>
+            <Stack direction="row" spacing={2} alignItems="center">
+              <Typography variant="body2" sx={{ flexGrow: 1 }}>
+                {selectedUsers.length} user(s) selected
+              </Typography>
+              {!showHidden && (
+                <Button
+                  variant="contained"
+                  size="small"
+                  startIcon={<HideIcon />}
+                  onClick={handleHide}
+                  color="warning"
+                >
+                  Hide Selected
+                </Button>
+              )}
+              {showHidden && (
+                <Button
+                  variant="contained"
+                  size="small"
+                  startIcon={<UnhideIcon />}
+                  onClick={handleUnhide}
+                  color="primary"
+                >
+                  Unhide Selected
+                </Button>
+              )}
+            </Stack>
+          </Paper>
+        )}
         <TableContainer component={Paper}>
         <Table>
           <TableHead>
             <TableRow>
+              <TableCell padding="checkbox">
+                <Checkbox
+                  indeterminate={selectedUsers.length > 0 && selectedUsers.length < users.length}
+                  checked={users.length > 0 && selectedUsers.length === users.length}
+                  onChange={handleSelectAll}
+                />
+              </TableCell>
               <TableCell>Name</TableCell>
               <TableCell>Email</TableCell>
               <TableCell>Department</TableCell>
@@ -230,9 +339,16 @@ function Users() {
             {users.map((user) => {
               const hasAzure = user.azure_id || user.last_seen_in_azure_at
               const hasOdoo = user.odoo_user_id || user.source_system === 'Odoo'
+              const isSelected = selectedUsers.includes(user.id)
 
               return (
-                <TableRow key={user.id}>
+                <TableRow key={user.id} selected={isSelected}>
+                  <TableCell padding="checkbox">
+                    <Checkbox
+                      checked={isSelected}
+                      onChange={() => handleSelectUser(user.id)}
+                    />
+                  </TableCell>
                   <TableCell>{user.name}</TableCell>
                   <TableCell>{user.email || '-'}</TableCell>
                   <TableCell>{user.department || '-'}</TableCell>

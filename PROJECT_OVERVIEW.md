@@ -40,22 +40,54 @@ Provide IT team members with a **single application** to:
 
 ## Project Background
 
+### Original Problem Statement
+
+The Odoo security implementation had evolved organically over time without a unified strategic approach, resulting in:
+
+- **266 unique security groups** in the Odoo 17 system
+- **127 groups documented** with reasonable detail on what each group does
+- **139 groups undocumented** - unknown if actively used, legacy configurations from Wedoo, or unnecessary bloat
+- **13,057 user-to-group assignments** requiring manual review
+- **255 groups marked "Under Review"** indicating uncertainty about their purpose and status
+- **Critical documentation gaps**:
+  - Missing "who requires access and why" for documented groups
+  - No clarity on purpose or necessity for 139 undocumented groups
+  - Inconsistent naming conventions (e.g., "STANDARD -" is too generic and open to interpretation)
+- **Multiple documentation attempts** that don't fully align:
+  - Plain English Security Groups document (policy-focused)
+  - Odoo User Security Group Assignment guide (assignment-focused)
+  - Raw CSV export of current state (operational data)
+- **Lack of visual understanding** of security group relationships, inheritance, and user assignments
+- **No systematic approach** for ongoing security audits and maintenance
+- **No annual audit process** - standard practice for security access reviews
+
 ### Problem Statement
 
 The IT team struggled with:
 - Understanding the complete security landscape at a glance
-- Identifying which groups are actively used vs. legacy/unused
+- Identifying which groups are actively used vs. legacy/unused (139 undocumented groups were a "black box")
 - Determining who requires access and why for security groups
 - Performing efficient audits of user access
+- Identifying orphaned, duplicate, or unnecessary groups
 - Understanding group inheritance relationships
+- Making informed decisions about security changes
 - Maintaining documentation that reflects actual implementation
+- Establishing consistent naming conventions (avoid generic terms like "STANDARD -")
+- Implementing annual audit processes for security access reviews
 
 ### Business Impact
 
-- **Security Risk**: Undocumented groups pose unknown security risks
-- **Operational Inefficiency**: Time-consuming manual processes
-- **Compliance Concerns**: Hard to demonstrate proper access controls during audits
-- **Maintenance Burden**: Difficult to maintain and update security
+- **Security Risk**: 
+  - 139 undocumented groups pose unknown security risks
+  - Potential legacy configurations from Wedoo creating vulnerabilities
+  - Unclear access requirements leading to over-privileged users or access gaps
+- **Operational Inefficiency**: Time-consuming manual processes for access reviews and audits
+- **Compliance Concerns**: 
+  - Hard to demonstrate proper access controls during audits
+  - Missing annual audit process (standard security practice)
+  - Inconsistent documentation doesn't meet audit requirements
+- **Maintenance Burden**: Difficult to maintain and update security as the organization evolves
+- **Go-Live Readiness**: Security gaps pose operational and security risks as we approach go-live
 
 ---
 

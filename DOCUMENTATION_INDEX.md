@@ -27,16 +27,11 @@ Quick reference guide to all project documentation files.
 
 ### Setup & Configuration
 - **SETUP.md** - General application setup (Python, Node.js, quick start)
-- **INTEGRATION_SETUP.md** - Detailed Azure AD and Odoo PostgreSQL integration setup
-- **ODOO_DATABASE_SETUP.md** - Step-by-step guide for creating read-only PostgreSQL user
+- **INTEGRATION_SETUP.md** - Detailed Azure AD and Odoo PostgreSQL integration setup (includes database user setup)
 
 ### Technical Reference
-- **TECH_STACK_AND_ARCHITECTURE.md** - Technology stack, architecture patterns, database schema
-- **DATA_SYNC_PLAN.md** - Data sync architecture and roadmap
+- **TECH_STACK_AND_ARCHITECTURE.md** - Technology stack, architecture patterns, database schema, data sync architecture
 - **TROUBLESHOOTING.md** - Common issues, error solutions, diagnostic steps
-
-### Testing & Quality
-- **TESTING_SUMMARY.md** - Test coverage, test results, testing approach
 
 ---
 
@@ -57,15 +52,14 @@ Located in `reference docs/` folder:
 ```
 PROJECT_OVERVIEW.md (Master Reference)
 ├── Links to PROJECT_TRACKER.md for detailed tracking
-├── Links to SUCCESS_CRITERIA.md for detailed criteria
-└── Links to Odoo_Security_Framework_Restructure_Project.md for original plan
+└── Links to SUCCESS_CRITERIA.md for detailed criteria
+   (Historical context from original plan included)
 
 SETUP.md (General Setup)
-├── References INTEGRATION_SETUP.md for Azure/Odoo configuration
-└── References ODOO_DATABASE_SETUP.md for database user creation
+└── References INTEGRATION_SETUP.md for Azure/Odoo configuration (includes database user setup)
 
 TECH_STACK_AND_ARCHITECTURE.md (Technical Details)
-└── References DATA_SYNC_PLAN.md for sync architecture
+└── Includes data sync architecture (previously in DATA_SYNC_PLAN.md)
 ```
 
 ---
@@ -78,11 +72,9 @@ TECH_STACK_AND_ARCHITECTURE.md (Technical Details)
 | See what features are completed/missing | **PROJECT_TRACKER.md** |
 | Check success criteria status | **SUCCESS_CRITERIA.md** |
 | Set up the application | **SETUP.md** |
-| Configure Azure/Odoo sync | **INTEGRATION_SETUP.md** |
-| Create database read-only user | **ODOO_DATABASE_SETUP.md** |
-| Understand technical architecture | **TECH_STACK_AND_ARCHITECTURE.md** |
+| Configure Azure/Odoo sync | **INTEGRATION_SETUP.md** (includes database user setup) |
+| Understand technical architecture | **TECH_STACK_AND_ARCHITECTURE.md** (includes data sync architecture) |
 | Troubleshoot an issue | **TROUBLESHOOTING.md** |
-| Plan data sync features | **DATA_SYNC_PLAN.md** |
 | Understand security policies | **reference docs/Plain English Security Groups.md** |
 | Assign groups to users | **reference docs/Odoo_User_Security_Group_Assignment.md** |
 
@@ -91,23 +83,25 @@ TECH_STACK_AND_ARCHITECTURE.md (Technical Details)
 ## 📝 Document Status
 
 ### Active Documents (Keep)
-- ✅ PROJECT_OVERVIEW.md (NEW - master reference)
+- ✅ PROJECT_OVERVIEW.md (master reference - includes historical context)
 - ✅ PROJECT_TRACKER.md (living document)
 - ✅ SUCCESS_CRITERIA.md (living document)
 - ✅ SETUP.md
-- ✅ INTEGRATION_SETUP.md
-- ✅ ODOO_DATABASE_SETUP.md
-- ✅ TECH_STACK_AND_ARCHITECTURE.md
+- ✅ INTEGRATION_SETUP.md (includes ODOO_DATABASE_SETUP.md content)
+- ✅ TECH_STACK_AND_ARCHITECTURE.md (includes DATA_SYNC_PLAN.md content)
 - ✅ TROUBLESHOOTING.md
-- ✅ DATA_SYNC_PLAN.md
-- ✅ TESTING_SUMMARY.md
+- ✅ NEXT_IMPLEMENTATION_PRIORITIES.md
 - ✅ README.md
-- ✅ Odoo_Security_Framework_Restructure_Project.md (original plan)
+- ✅ DOCUMENTATION_INDEX.md (this file)
 
 ### Consolidated/Deleted
 - ❌ PROJECT_STATUS_ANALYSIS.md → Merged into PROJECT_OVERVIEW.md
 - ❌ IMPLEMENTATION_LOG.md → Merged into PROJECT_TRACKER.md change log
-- ❌ DOCUMENTATION_REFERENCE_GUIDE.md → Replaced by this index
+- ❌ DOCUMENTATION_REFERENCE_GUIDE.md → Replaced by DOCUMENTATION_INDEX.md
+- ❌ ODOO_DATABASE_SETUP.md → Merged into INTEGRATION_SETUP.md
+- ❌ DATA_SYNC_PLAN.md → Merged into TECH_STACK_AND_ARCHITECTURE.md
+- ❌ Odoo_Security_Framework_Restructure_Project.md → Historical context extracted into PROJECT_OVERVIEW.md
+- ❌ TESTING_SUMMARY.md → Deleted (outdated)
 
 ---
 

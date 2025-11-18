@@ -69,6 +69,11 @@ function Data() {
   const [azureTestResult, setAzureTestResult] = useState(null)
   const [odooTestResult, setOdooTestResult] = useState(null)
   const [switchingEnv, setSwitchingEnv] = useState(false)
+  // Track which environments have been successfully tested
+  const [testedEnvironments, setTestedEnvironments] = useState({
+    PREPROD: false,
+    PROD: false
+  })
 
   useEffect(() => {
     loadSyncStatus()
@@ -119,6 +124,14 @@ function Data() {
     try {
       const response = await api.testOdooConnection()
       setOdooTestResult(response.data)
+      // Mark current environment as tested if successful
+      if (response.data.success) {
+        const currentEnv = configStatus?.odoo?.environment || 'PREPROD'
+        setTestedEnvironments(prev => ({
+          ...prev,
+          [currentEnv]: true
+        }))
+      }
     } catch (err) {
       setOdooTestResult({
         success: false,
@@ -135,8 +148,9 @@ function Data() {
     try {
       await api.switchOdooEnvironment(newEnv)
       await loadConfigStatus()
+      // Clear test result when switching environments - need to re-test
       setOdooTestResult(null)
-      setSyncMessage(`Switched to ${newEnv} environment`)
+      setSyncMessage(`Switched to ${newEnv} environment. Please test connection.`)
     } catch (err) {
       setSyncError(err.response?.data?.detail || err.message || 'Failed to switch environment')
     } finally {
@@ -383,17 +397,18 @@ function Data() {
                         disabled={switchingEnv}
                       >
                         <ToggleButton value="PREPROD" color="info">
+                          {testedEnvironments.PREPROD && (
+                            <CheckCircleIcon sx={{ mr: 0.5, fontSize: 16 }} color="success" />
+                          )}
                           Pre-Production
                         </ToggleButton>
                         <ToggleButton value="PROD" color="warning">
+                          {testedEnvironments.PROD && (
+                            <CheckCircleIcon sx={{ mr: 0.5, fontSize: 16 }} color="success" />
+                          )}
                           Production
                         </ToggleButton>
                       </ToggleButtonGroup>
-                      <Typography variant="caption" color="textSecondary" sx={{ mt: 0.5, display: 'block' }}>
-                        {configStatus?.odoo?.has_preprod ? '✓ PREPROD configured' : '✗ PREPROD not configured'}
-                        {' | '}
-                        {configStatus?.odoo?.has_prod ? '✓ PROD configured' : '✗ PROD not configured'}
-                      </Typography>
                     </Box>
 
                     <Button

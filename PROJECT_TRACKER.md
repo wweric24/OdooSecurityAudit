@@ -522,10 +522,13 @@ This project tracker monitors the progress of the Odoo Security Framework Review
 
 ## Related Documents
 
+- **Project Overview**: `PROJECT_OVERVIEW.md` ⭐ (Master reference)
 - **Original Project Plan**: `Odoo_Security_Framework_Restructure_Project.md`
-- **Status Analysis**: `PROJECT_STATUS_ANALYSIS.md`
+- **Success Criteria**: `SUCCESS_CRITERIA.md`
+- **Next Priorities**: `NEXT_IMPLEMENTATION_PRIORITIES.md`
 - **Architecture**: `TECH_STACK_AND_ARCHITECTURE.md`
 - **Setup Guide**: `SETUP.md`
+- **Documentation Index**: `DOCUMENTATION_INDEX.md`
 - **Testing Summary**: `TESTING_SUMMARY.md`
 - **Troubleshooting**: `TROUBLESHOOTING.md`
 

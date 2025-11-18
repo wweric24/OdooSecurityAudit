@@ -16,6 +16,7 @@ import Dashboard from './components/Dashboard'
 import Groups from './components/Groups'
 import GroupDetail from './components/GroupDetail'
 import Users from './components/Users'
+import UserDetail from './components/UserDetail'
 import Analysis from './components/Analysis'
 import Data from './components/Data'
 import Comparison from './components/Comparison'
@@ -82,6 +83,7 @@ function AppLayout() {
           <Route path="/groups" element={<Groups />} />
           <Route path="/groups/:id" element={<GroupDetail />} />
           <Route path="/users" element={<Users />} />
+          <Route path="/users/:id" element={<UserDetail />} />
           <Route path="/comparison" element={<Comparison />} />
           <Route path="/analysis" element={<Analysis />} />
           <Route path="/data" element={<Data />} />

@@ -25,8 +25,7 @@ class Settings:
     azure_graph_scope: str = os.getenv("AZURE_GRAPH_SCOPE", "https://graph.microsoft.com/.default")
     azure_user_sync_mock_file: Optional[str] = os.getenv("AZURE_USER_SYNC_MOCK_FILE")
 
-    # Odoo environment switching
-    odoo_environment: str = os.getenv("ODOO_ENVIRONMENT", "PREPROD")
+    # Odoo environment switching - these are read from env at init, but odoo_environment is dynamic
     odoo_preprod_dsn: Optional[str] = os.getenv("ODOO_PREPROD_DSN")
     odoo_prod_dsn: Optional[str] = os.getenv("ODOO_PROD_DSN")
     odoo_sync_mock_file: Optional[str] = os.getenv("ODOO_SYNC_MOCK_FILE")
@@ -44,6 +43,11 @@ class Settings:
         return rel if rel.is_file() else None
 
     @property
+    def odoo_environment(self) -> str:
+        """Get the current Odoo environment (reads dynamically from os.environ)."""
+        return os.getenv("ODOO_ENVIRONMENT", "PREPROD")
+
+    @property
     def odoo_postgres_dsn(self) -> Optional[str]:
         """Return the DSN for the currently active Odoo environment."""
         # First check for legacy single DSN (backwards compatibility)
@@ -51,7 +55,7 @@ class Settings:
         if legacy_dsn:
             return legacy_dsn
 
-        # Otherwise use environment-specific DSN
+        # Otherwise use environment-specific DSN (reads environment dynamically)
         if self.odoo_environment.upper() == "PROD":
             return self.odoo_prod_dsn
         else:  # Default to PREPROD

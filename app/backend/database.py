@@ -60,6 +60,8 @@ def ensure_additional_columns(db_engine: Engine):
             conn.execute(text("ALTER TABLE users ADD COLUMN source_system VARCHAR(50)"))
         if "last_seen_in_azure_at" not in user_column_names:
             conn.execute(text("ALTER TABLE users ADD COLUMN last_seen_in_azure_at DATETIME"))
+        if "is_hidden" not in user_column_names:
+            conn.execute(text("ALTER TABLE users ADD COLUMN is_hidden BOOLEAN DEFAULT 0"))
 
         # Access rights table columns
         access_rights_columns = inspector.get_columns("access_rights") if inspector.has_table("access_rights") else []

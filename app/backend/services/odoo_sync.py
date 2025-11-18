@@ -275,7 +275,9 @@ def _upsert_groups(db: Session, payload: Dict) -> Dict[str, int]:
 
             # Update group with Odoo sync information
             group.odoo_id = gid
-            group.source_system = "Odoo"
+            # Tag with environment (e.g., "Odoo (Pre-Production)" or "Odoo (Production)")
+            env_display = settings.odoo_environment_display
+            group.source_system = f"Odoo ({env_display})"
             group.synced_from_postgres_at = now
             group_lookup[gid] = group
 
@@ -315,7 +317,9 @@ def _upsert_groups(db: Session, payload: Dict) -> Dict[str, int]:
 
             user.odoo_user_id = uid
             user.email = email or user.email
-            user.source_system = "Odoo"
+            # Tag with environment (e.g., "Odoo (Pre-Production)" or "Odoo (Production)")
+            env_display = settings.odoo_environment_display
+            user.source_system = f"Odoo ({env_display})"
             user_lookup[uid] = user
 
         # Membership associations

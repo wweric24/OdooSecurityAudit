@@ -52,6 +52,10 @@ export const api = {
     return client.get('/api/users', { params })
   },
 
+  getUser: (id) => {
+    return client.get(`/api/users/${id}`)
+  },
+
   exportUsers: (params = {}) => {
     return client.get('/api/export/users', {
       params,

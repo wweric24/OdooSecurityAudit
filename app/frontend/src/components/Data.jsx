@@ -78,6 +78,13 @@ function Data() {
   useEffect(() => {
     loadSyncStatus()
     loadConfigStatus()
+    
+    // Reload sync status when window regains focus (user switches back to tab)
+    const handleFocus = () => {
+      loadSyncStatus()
+    }
+    window.addEventListener('focus', handleFocus)
+    return () => window.removeEventListener('focus', handleFocus)
   }, [])
 
   const loadConfigStatus = async () => {
@@ -121,21 +128,29 @@ function Data() {
   const handleTestOdoo = async () => {
     setTestingOdoo(true)
     setOdooTestResult(null)
+    setSyncMessage(null)
+    setSyncError(null)
+    // Get current environment before testing (don't reload config, use current state)
+    const currentEnv = configStatus?.odoo?.environment || 'PREPROD'
     try {
       const response = await api.testOdooConnection()
       setOdooTestResult(response.data)
+      
       // Mark current environment as tested if successful
       if (response.data.success) {
-        const currentEnv = configStatus?.odoo?.environment || 'PREPROD'
         setTestedEnvironments(prev => ({
           ...prev,
           [currentEnv]: true
         }))
       }
+      
+      // Don't reload config status - keep the current environment selected
+      // The test result will show the environment that was tested
     } catch (err) {
       setOdooTestResult({
         success: false,
         error: err.response?.data?.detail || err.message || 'Test failed',
+        environment: currentEnv
       })
     } finally {
       setTestingOdoo(false)
@@ -146,13 +161,26 @@ function Data() {
     if (!newEnv || newEnv === configStatus?.odoo?.environment) return
     setSwitchingEnv(true)
     try {
-      await api.switchOdooEnvironment(newEnv)
+      const response = await api.switchOdooEnvironment(newEnv)
       await loadConfigStatus()
       // Clear test result when switching environments - need to re-test
       setOdooTestResult(null)
-      setSyncMessage(`Switched to ${newEnv} environment. Please test connection.`)
+      
+      // Show warning for Production, success for Pre-Production
+      if (newEnv === 'PROD') {
+        // Always show as warning/error for Production
+        const warningMsg = response.data?.warning 
+          ? `${response.data.warning}. Please test connection.`
+          : `Switched to ${newEnv} environment. Please test connection.`
+        setSyncError(warningMsg)
+        setSyncMessage(null)
+      } else {
+        setSyncMessage(`Switched to ${newEnv} environment. Please test connection.`)
+        setSyncError(null)
+      }
     } catch (err) {
       setSyncError(err.response?.data?.detail || err.message || 'Failed to switch environment')
+      setSyncMessage(null)
     } finally {
       setSwitchingEnv(false)
     }
@@ -164,6 +192,25 @@ function Data() {
     const time = timestamp ? new Date(timestamp).toLocaleString() : 'Unknown time'
     return `${run.status} • ${time}`
   }
+
+  const formatStats = (stats) => {
+    if (!stats) return null
+    const parts = []
+    if (stats.users_created || stats.users_updated) {
+      parts.push(`${(stats.users_created || 0) + (stats.users_updated || 0)} users`)
+    }
+    if (stats.groups_created || stats.groups_updated) {
+      parts.push(`${(stats.groups_created || 0) + (stats.groups_updated || 0)} groups`)
+    }
+    if (stats.processed) {
+      parts.push(`${stats.processed} processed`)
+    }
+    return parts.length > 0 ? parts.join(', ') : null
+  }
+
+  // Color constants for consistency
+  const AZURE_COLOR = '#1976d2' // Blue
+  const ODOO_COLOR = '#9c27b0' // Light purple (lighter than #7b1fa2)
 
   const handleAzureSync = async () => {
     try {
@@ -415,11 +462,21 @@ function Data() {
                       variant="outlined"
                       size="small"
                       onClick={handleTestOdoo}
-                      disabled={!configStatus?.odoo?.configured || testingOdoo}
+                      disabled={testingOdoo}
                       startIcon={testingOdoo ? <CircularProgress size={16} /> : null}
                     >
                       {testingOdoo ? 'Testing...' : 'Test Connection'}
                     </Button>
+                    {configStatus?.odoo?.environment === 'PROD' && !configStatus?.odoo?.has_prod && (
+                      <Typography variant="caption" color="error" display="block" sx={{ mt: 1 }}>
+                        Production environment not configured. Set ODOO_PROD_DSN in .env
+                      </Typography>
+                    )}
+                    {configStatus?.odoo?.environment === 'PREPROD' && !configStatus?.odoo?.has_preprod && (
+                      <Typography variant="caption" color="error" display="block" sx={{ mt: 1 }}>
+                        Pre-Production environment not configured. Set ODOO_PREPROD_DSN in .env
+                      </Typography>
+                    )}
                     {odooTestResult && (
                       <Alert
                         severity={odooTestResult.success ? 'success' : 'error'}
@@ -435,7 +492,17 @@ function Data() {
                             </Typography>
                           </Box>
                         ) : (
-                          odooTestResult.error
+                          <Box>
+                            <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 0.5 }}>
+                              {odooTestResult.environment === 'PROD' ? 'Production' : 'Pre-Production'} Connection Failed
+                            </Typography>
+                            {odooTestResult.error}
+                            {odooTestResult.environment === 'PROD' && !configStatus?.odoo?.has_prod && (
+                              <Typography variant="caption" display="block" sx={{ mt: 1 }}>
+                                Production environment not configured. Set ODOO_PROD_DSN in .env
+                              </Typography>
+                            )}
+                          </Box>
                         )}
                       </Alert>
                     )}
@@ -450,13 +517,19 @@ function Data() {
           <Card sx={{ height: '100%' }}>
             <CardContent>
               <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
-                <CloudSyncIcon color="primary" />
+                <CloudSyncIcon sx={{ color: AZURE_COLOR }} />
                 <Box>
                   <Typography variant="h6">Azure Directory Sync</Typography>
                   <Typography variant="body2" color="textSecondary">
                     Pull users and departments directly from Microsoft Entra ID.
                   </Typography>
                 </Box>
+                {azureRun?.status === 'completed' && (
+                  <CheckCircleIcon sx={{ color: 'success.main', ml: 'auto' }} />
+                )}
+                {azureRun?.status === 'failed' && (
+                  <ErrorIcon sx={{ color: 'error.main', ml: 'auto' }} />
+                )}
               </Stack>
               {syncDescriptions.azure.map((line) => (
                 <Typography key={line} variant="body2" sx={{ mb: 0.5 }}>
@@ -465,7 +538,7 @@ function Data() {
               ))}
               <Button
                 variant="contained"
-                sx={{ mt: 2 }}
+                sx={{ mt: 2, bgcolor: AZURE_COLOR, '&:hover': { bgcolor: '#1565c0' } }}
                 onClick={handleAzureSync}
                 disabled={!configStatus?.azure?.configured}
               >
@@ -477,15 +550,41 @@ function Data() {
                 </Typography>
               )}
               <Divider sx={{ my: 2 }} />
-              <Typography variant="body2" color="textSecondary">
-                Last Run:
+              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
+                Sync History
               </Typography>
-              <Chip
-                label={formatRun(azureRun)}
-                variant="outlined"
-                color={azureRun?.status === 'failed' ? 'error' : 'default'}
-                sx={{ mt: 1 }}
-              />
+              {azureRun ? (
+                <Box>
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                    <Chip
+                      label={formatRun(azureRun)}
+                      variant="outlined"
+                      color={azureRun.status === 'failed' ? 'error' : azureRun.status === 'completed' ? 'success' : 'default'}
+                      size="small"
+                    />
+                    {azureRun.status === 'completed' && (
+                      <CheckCircleIcon sx={{ color: 'success.main', fontSize: 20 }} />
+                    )}
+                    {azureRun.status === 'failed' && (
+                      <ErrorIcon sx={{ color: 'error.main', fontSize: 20 }} />
+                    )}
+                  </Stack>
+                  {azureRun.stats && (
+                    <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 0.5 }}>
+                      {formatStats(azureRun.stats)}
+                    </Typography>
+                  )}
+                  {azureRun.error && (
+                    <Alert severity="error" sx={{ mt: 1 }} size="small">
+                      {azureRun.error}
+                    </Alert>
+                  )}
+                </Box>
+              ) : (
+                <Typography variant="body2" color="textSecondary">
+                  No sync runs yet
+                </Typography>
+              )}
             </CardContent>
           </Card>
         </Grid>
@@ -494,7 +593,7 @@ function Data() {
           <Card sx={{ height: '100%' }}>
             <CardContent>
               <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
-                <StorageIcon color="primary" />
+                <StorageIcon sx={{ color: ODOO_COLOR }} />
                 <Box>
                   <Typography variant="h6">
                     Odoo Postgres Sync
@@ -511,6 +610,12 @@ function Data() {
                     Query the remote Odoo database for groups, users, and inheritance chains.
                   </Typography>
                 </Box>
+                {odooRun?.status === 'completed' && (
+                  <CheckCircleIcon sx={{ color: 'success.main', ml: 'auto' }} />
+                )}
+                {odooRun?.status === 'failed' && (
+                  <ErrorIcon sx={{ color: 'error.main', ml: 'auto' }} />
+                )}
               </Stack>
               {syncDescriptions.odoo.map((line) => (
                 <Typography key={line} variant="body2" sx={{ mb: 0.5 }}>
@@ -519,7 +624,7 @@ function Data() {
               ))}
               <Button
                 variant="contained"
-                sx={{ mt: 2 }}
+                sx={{ mt: 2, bgcolor: ODOO_COLOR, '&:hover': { bgcolor: '#7b1fa2' } }}
                 onClick={handleOdooSync}
                 disabled={!configStatus?.odoo?.configured}
               >
@@ -531,15 +636,41 @@ function Data() {
                 </Typography>
               )}
               <Divider sx={{ my: 2 }} />
-              <Typography variant="body2" color="textSecondary">
-                Last Run:
+              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
+                Sync History
               </Typography>
-              <Chip
-                label={formatRun(odooRun)}
-                variant="outlined"
-                color={odooRun?.status === 'failed' ? 'error' : 'default'}
-                sx={{ mt: 1 }}
-              />
+              {odooRun ? (
+                <Box>
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                    <Chip
+                      label={formatRun(odooRun)}
+                      variant="outlined"
+                      color={odooRun.status === 'failed' ? 'error' : odooRun.status === 'completed' ? 'success' : 'default'}
+                      size="small"
+                    />
+                    {odooRun.status === 'completed' && (
+                      <CheckCircleIcon sx={{ color: 'success.main', fontSize: 20 }} />
+                    )}
+                    {odooRun.status === 'failed' && (
+                      <ErrorIcon sx={{ color: 'error.main', fontSize: 20 }} />
+                    )}
+                  </Stack>
+                  {odooRun.stats && (
+                    <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 0.5 }}>
+                      {formatStats(odooRun.stats)}
+                    </Typography>
+                  )}
+                  {odooRun.error && (
+                    <Alert severity="error" sx={{ mt: 1 }} size="small">
+                      {odooRun.error}
+                    </Alert>
+                  )}
+                </Box>
+              ) : (
+                <Typography variant="body2" color="textSecondary">
+                  No sync runs yet
+                </Typography>
+              )}
             </CardContent>
           </Card>
         </Grid>

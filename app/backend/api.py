@@ -488,7 +488,7 @@ async def get_users(
         query = query.filter(User.name.contains(search))
 
     total = query.count()
-    users = query.offset(skip).limit(limit).all()
+    users = query.options(joinedload(User.groups)).offset(skip).limit(limit).all()
     
     return {
         "total": total,
@@ -505,11 +505,37 @@ async def get_users(
                 "odoo_user_id": u.odoo_user_id,
                 "last_seen_in_azure_at": u.last_seen_in_azure_at.isoformat() if u.last_seen_in_azure_at else None,
                 "is_hidden": u.is_hidden,
+                "created_at": u.created_at.isoformat() if u.created_at else None,
+                "updated_at": u.updated_at.isoformat() if u.updated_at else None,
                 "group_count": len(u.groups),
                 "groups": [{"id": g.id, "name": g.name} for g in u.groups]
             }
             for u in users
         ]
+    }
+
+
+@app.get("/api/users/{user_id}")
+async def get_user(user_id: int, db: Session = Depends(get_db)):
+    """Get a single user by ID with all details."""
+    user = db.query(User).options(joinedload(User.groups)).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "department": user.department,
+        "source_system": user.source_system,
+        "azure_id": user.azure_id,
+        "odoo_user_id": user.odoo_user_id,
+        "last_seen_in_azure_at": user.last_seen_in_azure_at.isoformat() if user.last_seen_in_azure_at else None,
+        "is_hidden": user.is_hidden,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "updated_at": user.updated_at.isoformat() if user.updated_at else None,
+        "group_count": len(user.groups),
+        "groups": [{"id": g.id, "name": g.name} for g in user.groups]
     }
 
 
@@ -911,11 +937,30 @@ async def test_azure_connection():
 @app.post("/api/config/test-odoo")
 async def test_odoo_connection():
     """Test Odoo PostgreSQL connection without performing a full sync."""
+    # Get current environment (reads dynamically)
+    current_env = settings.odoo_environment
+    
+    # Check if the current environment is configured
+    if current_env.upper() == "PROD":
+        if not settings.odoo_prod_dsn:
+            return {
+                "success": False,
+                "error": "Production environment not configured. Set ODOO_PROD_DSN in .env",
+                "environment": current_env
+            }
+    else:  # PREPROD
+        if not settings.odoo_preprod_dsn:
+            return {
+                "success": False,
+                "error": "Pre-Production environment not configured. Set ODOO_PREPROD_DSN in .env",
+                "environment": current_env
+            }
+    
     if not settings.odoo_configured:
         return {
             "success": False,
-            "error": f"Odoo database not configured. Set ODOO_{settings.odoo_environment}_DSN in .env",
-            "environment": settings.odoo_environment
+            "error": f"Odoo database not configured. Set ODOO_{current_env}_DSN in .env",
+            "environment": current_env
         }
 
     try:
@@ -960,31 +1005,26 @@ async def switch_odoo_environment(environment: str = Query(..., regex="^(PREPROD
     # Note: This only affects the current session. To persist, update .env file
     old_env = settings.odoo_environment
 
-    # Check if the target environment is configured
+    # Allow switching even if environment is not configured (user might want to test)
+    # But warn them if it's not configured
+    warning = None
     if environment == "PROD" and not settings.odoo_prod_dsn:
-        return {
-            "success": False,
-            "error": "PROD environment not configured. Set ODOO_PROD_DSN in .env"
-        }
-    if environment == "PREPROD" and not settings.odoo_preprod_dsn:
-        return {
-            "success": False,
-            "error": "PREPROD environment not configured. Set ODOO_PREPROD_DSN in .env"
-        }
+        warning = "Production environment not configured. Set ODOO_PROD_DSN in .env"
+    elif environment == "PREPROD" and not settings.odoo_preprod_dsn:
+        warning = "Pre-Production environment not configured. Set ODOO_PREPROD_DSN in .env"
 
     # Update the environment (note: this is in-memory only)
     os.environ["ODOO_ENVIRONMENT"] = environment
-
-    # Reload settings to pick up the change
-    from importlib import reload
-    import app.backend.settings as settings_module
-    reload(settings_module)
+    
+    # Settings now reads environment dynamically, so no reload needed
+    # The property will read from os.environ on next access
 
     return {
         "success": True,
         "message": f"Switched from {old_env} to {environment}",
         "previous_environment": old_env,
         "current_environment": environment,
+        "warning": warning,
         "note": "This change is temporary. Update ODOO_ENVIRONMENT in .env to persist."
     }
 

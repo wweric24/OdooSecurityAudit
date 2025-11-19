@@ -12,17 +12,6 @@ const client = axios.create({
 })
 
 export const api = {
-  // Import
-  importCSV: (file) => {
-    const formData = new FormData()
-    formData.append('file', file)
-    return client.post('/api/import', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    })
-  },
-
   // Groups
   getGroups: (params = {}) => {
     return client.get('/api/groups', { params })

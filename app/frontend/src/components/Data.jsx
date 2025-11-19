@@ -10,7 +10,6 @@ import {
   Alert,
   Divider,
   Chip,
-  LinearProgress,
   Paper,
   Table,
   TableBody,
@@ -30,7 +29,6 @@ import {
 import {
   CloudSync as CloudSyncIcon,
   Storage as StorageIcon,
-  UploadFile as UploadFileIcon,
   Download as DownloadIcon,
   CheckCircle as CheckCircleIcon,
   Error as ErrorIcon,
@@ -50,17 +48,7 @@ const syncDescriptions = {
     'Requires read-only DSN (ODOO_POSTGRES_DSN) with SSL enabled.',
     'Ideal to run before comparisons or AI analysis to ensure freshest dataset.',
   ],
-  import: [
-    'Upload the CSV export generated from Odoo security reports.',
-    'The importer validates naming standards, purpose fields, and user assignments.',
-    'Use this when you cannot connect directly to Postgres or need to load historical snapshots.',
-  ],
 }
-
-const importSummaryColumns = [
-  { field: 'metric', headerName: 'Metric', flex: 1 },
-  { field: 'value', headerName: 'Value', flex: 1 },
-]
 
 function Data() {
   const [azureRun, setAzureRun] = useState(null)
@@ -69,10 +57,6 @@ function Data() {
   const [syncError, setSyncError] = useState(null)
   const [azureHistory, setAzureHistory] = useState([])
   const [odooHistory, setOdooHistory] = useState([])
-  const [file, setFile] = useState(null)
-  const [uploading, setUploading] = useState(false)
-  const [importResult, setImportResult] = useState(null)
-  const [importError, setImportError] = useState(null)
   const [exporting, setExporting] = useState(false)
   const [deletingAzure, setDeletingAzure] = useState(false)
   const [deletingOdoo, setDeletingOdoo] = useState(false)
@@ -463,41 +447,14 @@ function Data() {
     }
   }
 
-  const handleFileChange = (event) => {
-    const selectedFile = event.target.files[0]
-    if (selectedFile) {
-      setFile(selectedFile)
-      setImportError(null)
-      setImportResult(null)
-    }
-  }
-
-  const handleUpload = async () => {
-    if (!file) {
-      setImportError('Please select a CSV file to import.')
-      return
-    }
-    try {
-      setUploading(true)
-      setImportError(null)
-      const response = await api.importCSV(file)
-      setImportResult(response.data)
-      setSyncMessage('CSV import completed.')
-    } catch (err) {
-      setImportError(err.response?.data?.detail || err.message || 'Import failed')
-    } finally {
-      setUploading(false)
-    }
-  }
-
   return (
     <Box>
       <Typography variant="h4" gutterBottom>
         Data & Integrations
       </Typography>
       <Typography variant="body1" color="textSecondary">
-        Refresh Azure users, Odoo security groups, and CSV imports from a single workspace. Run these
-        steps anytime before audits or AI analysis to ensure the dataset is aligned with production.
+        Refresh Azure users and Odoo security groups directly from their source systems. Run these steps
+        anytime before audits or AI analysis to ensure the dataset mirrors production.
       </Typography>
 
       {syncMessage && (
@@ -929,95 +886,6 @@ function Data() {
           <Card>
             <CardContent>
               <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
-                <UploadFileIcon color="primary" />
-                <Box>
-                  <Typography variant="h6">CSV Import</Typography>
-                  <Typography variant="body2" color="textSecondary">
-                    Upload the latest Odoo export when direct database access isn’t available.
-                  </Typography>
-                </Box>
-              </Stack>
-              {syncDescriptions.import.map((line) => (
-                <Typography key={line} variant="body2" sx={{ mb: 0.5 }}>
-                  • {line}
-                </Typography>
-              ))}
-              <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap', mt: 2 }}>
-                <input
-                  accept=".csv"
-                  style={{ display: 'none' }}
-                  id="data-tab-csv-input"
-                  type="file"
-                  onChange={handleFileChange}
-                />
-                <label htmlFor="data-tab-csv-input">
-                  <Button variant="outlined" component="span" startIcon={<UploadFileIcon />}>
-                    Select CSV File
-                  </Button>
-                </label>
-                <Button
-                  variant="contained"
-                  onClick={handleUpload}
-                  disabled={!file || uploading}
-                >
-                  {uploading ? 'Uploading...' : 'Upload & Process'}
-                </Button>
-                {file && (
-                  <Typography variant="body2" color="textSecondary">
-                    Selected: {file.name}
-                  </Typography>
-                )}
-              </Box>
-              {uploading && (
-                <Box sx={{ mt: 2 }}>
-                  <LinearProgress />
-                </Box>
-              )}
-              {importError && (
-                <Alert severity="error" sx={{ mt: 2 }}>
-                  {importError}
-                </Alert>
-              )}
-              {importResult && (
-                <Box sx={{ mt: 3 }}>
-                  <Alert severity="success" sx={{ mb: 2 }}>
-                    Import completed successfully!
-                  </Alert>
-                  <ConfigurableDataGrid
-                    storageKey="import-summary"
-                    columns={importSummaryColumns}
-                    rows={[
-                      {
-                        id: 'groups_imported',
-                        metric: 'Groups Imported',
-                        value: importResult.groups_imported,
-                      },
-                      {
-                        id: 'groups_created',
-                        metric: 'Groups Created',
-                        value: importResult.groups_created,
-                      },
-                      {
-                        id: 'users_created',
-                        metric: 'Users Created',
-                        value: importResult.users_created,
-                      },
-                    ]}
-                    height={220}
-                    disableRowSelectionOnClick
-                    hideFooter
-                    getRowId={(row) => row.id}
-                  />
-                </Box>
-              )}
-            </CardContent>
-          </Card>
-        </Grid>
-
-        <Grid item xs={12}>
-          <Card>
-            <CardContent>
-              <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
                 <DownloadIcon color="primary" />
                 <Box>
                   <Typography variant="h6">Exports & Reports</Typography>
@@ -1085,7 +953,7 @@ function Data() {
                   What will remain:
                 </Typography>
                 <Typography variant="body2">
-                  • {azureDeletePreview.will_remain_users} users from other sources (Odoo, CSV import, or manually created)
+                  • {azureDeletePreview.will_remain_users} users from other sources (Odoo sync or manually created)
                 </Typography>
               </Alert>
               <Typography variant="caption" color="textSecondary">
@@ -1141,10 +1009,10 @@ function Data() {
                   What will remain:
                 </Typography>
                 <Typography variant="body2">
-                  • {odooDeletePreview.will_remain_groups} groups from other sources (Azure, CSV import, or manually created)
+                  • {odooDeletePreview.will_remain_groups} groups from other sources (Azure sync or manually created)
                 </Typography>
                 <Typography variant="body2">
-                  • {odooDeletePreview.will_remain_users} users from other sources (Azure, CSV import, or manually created)
+                  • {odooDeletePreview.will_remain_users} users from other sources (Azure sync or manually created)
                 </Typography>
               </Alert>
               <Typography variant="caption" color="textSecondary">

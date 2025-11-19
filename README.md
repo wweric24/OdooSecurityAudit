@@ -4,7 +4,7 @@ A web-based application for managing, visualizing, and analyzing Odoo security g
 
 ## Features
 
-- **CSV Import**: Import and process Odoo security group exports
+- **Data Integrations**: Direct syncs from Azure AD (Microsoft Graph) and Odoo Postgres
 - **Group Management**: View and manage security groups with standardized documentation
 - **User Assignment Matrix**: See which users are assigned to which groups
 - **Compliance Analysis**: Check compliance with naming conventions and documentation standards
@@ -64,7 +64,7 @@ The frontend will be available at `http://localhost:3100`
 
 1. Start both backend and frontend servers
 2. Navigate to `http://localhost:3000`
-3. Go to the Import page and upload your Odoo CSV export
+3. Open the **Data & Integrations** workspace and run the Azure + Odoo syncs
 4. Explore groups, users, and analysis in the respective sections
 
 ## API Documentation
@@ -77,19 +77,18 @@ Once the backend is running, API documentation is available at:
 
 ```
 app/
-├── backend/          # FastAPI backend
-│   ├── api.py       # API endpoints
-│   ├── database.py  # Database setup
-│   └── main.py      # Entry point
-├── frontend/         # React frontend
-│   └── src/
-│       ├── components/  # React components
-│       └── api/         # API client
-├── data/            # Data models and parsers
-│   ├── models.py    # SQLAlchemy models
-│   └── csv_parser.py # CSV parsing logic
-└── config/          # Configuration files
-    └── standards.json # Standards definition
+├─ backend/          # FastAPI backend
+│  ├─ api.py         # API endpoints
+│  ├─ database.py    # Database setup
+│  └─ main.py        # Entry point
+├─ frontend/         # React frontend
+│  └─ src/
+│     ├─ components/ # React components
+│     └─ api/        # API client
+├─ data/             # Data models
+│  └─ models.py      # SQLAlchemy models
+└─ config/           # Configuration files
+   └─ standards.json # Standards definition
 ```
 
 ## Standards
@@ -100,4 +99,3 @@ The application enforces the following standards:
 - Access level hierarchy: Level 1 (Admin) > Level 2 (Manager) > Level 3 (User)
 
 See `app/config/standards.json` for full configuration.
-

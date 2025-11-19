@@ -14,7 +14,7 @@ The Odoo Security Management Application is a web-based tool designed to help IT
 
 - **Application Status**: ✅ Functional and operational
 - **Core Features**: ✅ Dashboard, Groups, Users, Analysis, Data Sync
-- **Data Integration**: ✅ Azure AD sync, Odoo PostgreSQL sync, CSV import
+- **Data Integration**: ✅ Azure AD sync, Odoo PostgreSQL sync
 - **Backend**: ✅ FastAPI with SQLite database
 - **Frontend**: ✅ React with Material-UI and DataGrid
 
@@ -130,7 +130,6 @@ The IT team struggled with:
 ## Completed Features
 
 ### Core Application
-- ✅ CSV Import functionality
 - ✅ Dashboard with statistics
 - ✅ Groups management with search/filter
 - ✅ Users view with group assignments

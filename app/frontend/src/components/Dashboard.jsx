@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   Grid,
   Card,
@@ -10,6 +10,10 @@ import {
   Chip,
   Stack,
   LinearProgress,
+  TextField,
+  MenuItem,
+  Divider,
+  Paper,
 } from '@mui/material'
 import {
   ResponsiveContainer,
@@ -20,9 +24,60 @@ import {
   Tooltip,
   Cell,
 } from 'recharts'
-import cytoscape from 'cytoscape'
+import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos'
 import { api } from '../api/client'
 import ConfigurableDataGrid from './common/ConfigurableDataGrid'
+
+const RISK_CARD_IDS = [
+  'highRiskUsers',
+  'highImpactGroups',
+  'riskHighlights',
+  'relationshipExplorer',
+]
+const RISK_CARD_ORDER_STORAGE_KEY = 'dashboard-risk-card-order'
+const END_DROP_ZONE_ID = '__risk-card-dropzone__'
+
+const normalizeCardOrder = (order) => {
+  const safeOrder = Array.isArray(order) ? order : []
+  const seen = new Set()
+  const deduped = []
+
+  safeOrder.forEach((cardId) => {
+    if (RISK_CARD_IDS.includes(cardId) && !seen.has(cardId)) {
+      seen.add(cardId)
+      deduped.push(cardId)
+    }
+  })
+
+  RISK_CARD_IDS.forEach((cardId) => {
+    if (!seen.has(cardId)) {
+      seen.add(cardId)
+      deduped.push(cardId)
+    }
+  })
+
+  return deduped
+}
+
+const moveCard = (order, draggedCardId, targetCardId) => {
+  if (!draggedCardId || draggedCardId === targetCardId) {
+    return order
+  }
+
+  const filtered = order.filter((id) => id !== draggedCardId)
+  if (!targetCardId || targetCardId === END_DROP_ZONE_ID) {
+    return [...filtered, draggedCardId]
+  }
+
+  const targetIndex = filtered.indexOf(targetCardId)
+  if (targetIndex === -1) {
+    return [...filtered, draggedCardId]
+  }
+
+  const next = [...filtered]
+  next.splice(targetIndex, 0, draggedCardId)
+  return next
+}
 
 const panelStyle = {
   backgroundColor: '#fff',
@@ -38,6 +93,19 @@ function Dashboard() {
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [riskCardOrder, setRiskCardOrder] = useState(() => {
+    if (typeof window === 'undefined') {
+      return normalizeCardOrder()
+    }
+    try {
+      const stored = window.localStorage.getItem(RISK_CARD_ORDER_STORAGE_KEY)
+      return stored ? normalizeCardOrder(JSON.parse(stored)) : normalizeCardOrder()
+    } catch {
+      return normalizeCardOrder()
+    }
+  })
+  const [draggingCard, setDraggingCard] = useState(null)
+  const [activeDropTarget, setActiveDropTarget] = useState(null)
 
   useEffect(() => {
     loadStats()
@@ -55,6 +123,12 @@ function Dashboard() {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(RISK_CARD_ORDER_STORAGE_KEY, JSON.stringify(riskCardOrder))
+    }
+  }, [riskCardOrder])
 
   const renderSignalChips = (signals) => {
     if (!signals || signals.length === 0) {
@@ -261,64 +335,55 @@ function Dashboard() {
     )
   }, [topMatrixDepartments])
 
-  const inheritanceGraphElements = useMemo(() => {
-    const graph = stats?.inheritance_graph || {}
-    const nodes = graph.nodes || []
-    const edges = graph.edges || []
-    const nodeElements = nodes.map((node) => ({
-      data: {
-        id: `node-${node.id}`,
-        label: node.name || 'Group',
-        module: node.module || 'Unassigned',
-        role: node.role || 'group',
-      },
-    }))
-    const edgeElements = edges.map((edge) => ({
-      data: {
-        id: `edge-${edge.id || `${edge.source}-${edge.target}`}`,
-        source: `node-${edge.source}`,
-        target: `node-${edge.target}`,
-      },
-    }))
-    return [...nodeElements, ...edgeElements]
-  }, [stats])
+  const inheritanceGraph = useMemo(() => {
+    const graph = stats?.inheritance_graph
+    if (!graph?.nodes?.length) {
+      return {
+        nodesById: new Map(),
+        ordered: [],
+        edges: [],
+        maxDegree: 0,
+      }
+    }
 
-  const cytoscapeStyles = useMemo(
-    () => [
-      {
-        selector: 'node',
-        style: {
-          label: 'data(label)',
-          'text-valign': 'center',
-          'text-halign': 'center',
-          color: '#fff',
-          'font-size': 10,
-          width: 60,
-          height: 60,
-          'background-color': '#1976d2',
-          'border-width': 2,
-          'border-color': '#ffffff',
-        },
-      },
-      {
-        selector: 'node[role = "child"]',
-        style: {
-          'background-color': '#26a69a',
-        },
-      },
-      {
-        selector: 'edge',
-        style: {
-          width: 2,
-          'line-color': '#b0bec5',
-          'target-arrow-color': '#b0bec5',
-          'target-arrow-shape': 'triangle',
-          'curve-style': 'bezier',
-        },
-      },
-    ],
-    []
-  )
+    const nodesById = new Map()
+    graph.nodes.forEach((node) => {
+      nodesById.set(node.id, {
+        ...node,
+        parents: [],
+        children: [],
+      })
+    })
+
+    const edges = graph.edges || []
+    edges.forEach((edge) => {
+      const source = nodesById.get(edge.source)
+      const target = nodesById.get(edge.target)
+      if (!source || !target) return
+      source.children.push(target.id)
+      target.parents.push(source.id)
+    })
+
+    const ordered = Array.from(nodesById.values()).sort((a, b) => {
+      const degree = (node) => (node.parents?.length || 0) + (node.children?.length || 0)
+      const result = degree(b) - degree(a)
+      if (result !== 0) return result
+      return (b.children?.length || 0) - (a.children?.length || 0)
+    })
+
+    const maxDegree =
+      ordered.reduce(
+        (max, node) => Math.max(max, (node.parents?.length || 0) + (node.children?.length || 0)),
+        0
+      ) || 0
+
+    return {
+      nodesById,
+      ordered,
+      edges,
+      maxDegree,
+    }
+  }, [stats])
 
   if (loading) {
     return (
@@ -364,27 +429,150 @@ function Dashboard() {
     return `rgba(25, 118, 210, ${alpha})`
   }
 
-  const CytoscapeGraph = ({ elements, stylesheet }) => {
-    const containerRef = useRef(null)
-
-    useEffect(() => {
-      if (!containerRef.current || !elements?.length) return undefined
-      const cy = cytoscape({
-        container: containerRef.current,
-        elements,
-        style: stylesheet,
-        layout: { name: 'cose', animate: false },
-      })
-      return () => cy.destroy()
-    }, [elements, stylesheet])
-
-    return <Box ref={containerRef} sx={{ width: '100%', height: 420 }} />
-  }
-
   const statsGridStyles = {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
     gap: { xs: 2, md: 3 },
+  }
+
+  const handleCardDragStart = (event, cardId) => {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', cardId)
+    setDraggingCard(cardId)
+  }
+
+  const handleCardDragEnd = () => {
+    setDraggingCard(null)
+    setActiveDropTarget(null)
+  }
+
+  const handleCardDragOver = (event, targetId) => {
+    event.preventDefault()
+    if (!draggingCard) return
+    event.dataTransfer.dropEffect = 'move'
+    setActiveDropTarget((current) => (current === targetId ? current : targetId))
+  }
+
+  const handleCardDragLeave = (targetId) => {
+    setActiveDropTarget((current) => (current === targetId ? null : current))
+  }
+
+  const handleCardDrop = (event, targetId) => {
+    event.preventDefault()
+    const draggedCardId = event.dataTransfer.getData('text/plain')
+    if (!draggedCardId) {
+      handleCardDragEnd()
+      return
+    }
+    setRiskCardOrder((prev) => moveCard(prev, draggedCardId, targetId))
+    handleCardDragEnd()
+  }
+
+  const renderRiskCard = (cardId) => {
+    switch (cardId) {
+      case 'highRiskUsers':
+        return (
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                High-Risk Users
+              </Typography>
+              <Typography variant="body2" color="textSecondary" sx={{ mb: 1.5 }}>
+                Heaviest access footprints or undocumented assignments (threshold:{' '}
+                {stats.heavy_user_threshold || 0} groups).
+              </Typography>
+              {userRiskRows.length > 0 ? (
+                <ConfigurableDataGrid
+                  storageKey="dashboard-user-risks"
+                  columns={userRiskColumns}
+                  rows={userRiskRows}
+                  height={360}
+                  hideFooter
+                />
+              ) : (
+                <Typography variant="body2" color="textSecondary">
+                  No risk signals yet. Sync data to populate this view.
+                </Typography>
+              )}
+            </CardContent>
+          </Card>
+        )
+      case 'highImpactGroups':
+        return (
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                High-Impact Groups
+              </Typography>
+              <Typography variant="body2" color="textSecondary" sx={{ mb: 1.5 }}>
+                Groups with the most users or outstanding documentation tasks.
+              </Typography>
+              {groupRiskRows.length > 0 ? (
+                <ConfigurableDataGrid
+                  storageKey="dashboard-group-risks"
+                  columns={groupRiskColumns}
+                  rows={groupRiskRows}
+                  height={360}
+                  hideFooter
+                />
+              ) : (
+                <Typography variant="body2" color="textSecondary">
+                  No high-impact groups identified.
+                </Typography>
+              )}
+            </CardContent>
+          </Card>
+        )
+      case 'riskHighlights':
+        return (
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Risk & Inheritance Highlights
+              </Typography>
+              <Box sx={{ mt: 1, mb: 2 }}>
+                <Typography variant="body1">
+                  Groups without users: <strong>{stats.groups_without_users || 0}</strong>
+                </Typography>
+                {stats.orphaned_group_samples && stats.orphaned_group_samples.length > 0 && (
+                  <Typography variant="caption" color="textSecondary">
+                    Examples: {stats.orphaned_group_samples.map((g) => g.name).join(', ')}
+                  </Typography>
+                )}
+              </Box>
+              {inheritanceRows.length > 0 ? (
+                <ConfigurableDataGrid
+                  storageKey="dashboard-inheritance"
+                  columns={inheritanceColumns}
+                  rows={inheritanceRows}
+                  height={360}
+                />
+              ) : (
+                <Typography variant="body2" color="textSecondary">
+                  No inheritance data captured yet.
+                </Typography>
+              )}
+            </CardContent>
+          </Card>
+        )
+      case 'relationshipExplorer':
+        return (
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Group Relationship Explorer
+              </Typography>
+              <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+                Inspect inheritance chains, track upstream owners, and map downstream access in a
+                structured view.
+              </Typography>
+              <GroupRelationshipExplorer graph={inheritanceGraph} />
+            </CardContent>
+          </Card>
+        )
+      default:
+        return null
+    }
   }
 
   return (
@@ -588,117 +776,321 @@ function Dashboard() {
               </Card>
             </Grid>
 
-            <Grid item xs={12} lg={6}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    High-Risk Users
-                  </Typography>
-                  <Typography variant="body2" color="textSecondary" sx={{ mb: 1.5 }}>
-                    Heaviest access footprints or undocumented assignments (threshold:{' '}
-                    {stats.heavy_user_threshold || 0} groups).
-                  </Typography>
-                  {userRiskRows.length > 0 ? (
-                    <ConfigurableDataGrid
-                      storageKey="dashboard-user-risks"
-                      columns={userRiskColumns}
-                      rows={userRiskRows}
-                      height={360}
-                      hideFooter
-                    />
-                  ) : (
-                    <Typography variant="body2" color="textSecondary">
-                      No risk signals yet. Sync data to populate this view.
-                    </Typography>
-                  )}
-                </CardContent>
-              </Card>
-            </Grid>
-
-            <Grid item xs={12} lg={6}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    High-Impact Groups
-                  </Typography>
-                  <Typography variant="body2" color="textSecondary" sx={{ mb: 1.5 }}>
-                    Groups with the most users or outstanding documentation tasks.
-                  </Typography>
-                  {groupRiskRows.length > 0 ? (
-                    <ConfigurableDataGrid
-                      storageKey="dashboard-group-risks"
-                      columns={groupRiskColumns}
-                      rows={groupRiskRows}
-                      height={360}
-                      hideFooter
-                    />
-                  ) : (
-                    <Typography variant="body2" color="textSecondary">
-                      No high-impact groups identified.
-                    </Typography>
-                  )}
-                </CardContent>
-              </Card>
-            </Grid>
-
-            <Grid item xs={12} lg={6}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Risk & Inheritance Highlights
-                  </Typography>
-                  <Box sx={{ mt: 1, mb: 2 }}>
-                    <Typography variant="body1">
-                      Groups without users: <strong>{stats.groups_without_users || 0}</strong>
-                    </Typography>
-                    {stats.orphaned_group_samples && stats.orphaned_group_samples.length > 0 && (
-                      <Typography variant="caption" color="textSecondary">
-                        Examples: {stats.orphaned_group_samples.map((g) => g.name).join(', ')}
-                      </Typography>
-                    )}
+            {riskCardOrder.map((cardId) => {
+              const cardContent = renderRiskCard(cardId)
+              if (!cardContent) return null
+              const isActiveTarget = activeDropTarget === cardId
+              return (
+                <Grid item xs={12} key={cardId}>
+                  <Box
+                    draggable
+                    onDragStart={(event) => handleCardDragStart(event, cardId)}
+                    onDragOver={(event) => handleCardDragOver(event, cardId)}
+                    onDragLeave={() => handleCardDragLeave(cardId)}
+                    onDrop={(event) => handleCardDrop(event, cardId)}
+                    onDragEnd={handleCardDragEnd}
+                    sx={{
+                      border: '1px solid',
+                      borderColor: isActiveTarget ? 'primary.light' : 'transparent',
+                      borderRadius: 2,
+                      cursor: draggingCard === cardId ? 'grabbing' : 'grab',
+                      userSelect: 'none',
+                      transition: 'border-color 0.15s ease, transform 0.15s ease',
+                      transform: isActiveTarget ? 'scale(0.995)' : 'none',
+                    }}
+                  >
+                    {cardContent}
                   </Box>
-                  {inheritanceRows.length > 0 ? (
-                    <ConfigurableDataGrid
-                      storageKey="dashboard-inheritance"
-                      columns={inheritanceColumns}
-                      rows={inheritanceRows}
-                      height={360}
-                    />
-                  ) : (
-                    <Typography variant="body2" color="textSecondary">
-                      No inheritance data captured yet.
-                    </Typography>
-                  )}
-                </CardContent>
-              </Card>
-            </Grid>
-
-            <Grid item xs={12} lg={6}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Group Relationship Map
-                  </Typography>
-                  <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
-                    Explore inherited access paths for the most connected groups.
-                  </Typography>
-                  {inheritanceGraphElements.length > 0 ? (
-                    <CytoscapeGraph
-                      elements={inheritanceGraphElements}
-                      stylesheet={cytoscapeStyles}
-                    />
-                  ) : (
-                    <Typography variant="body2" color="textSecondary">
-                      Relationship data will appear once inheritance links are synced.
-                    </Typography>
-                  )}
-                </CardContent>
-              </Card>
-            </Grid>
+                </Grid>
+              )
+            })}
+            {draggingCard && (
+              <Grid item xs={12} key={END_DROP_ZONE_ID}>
+                <Box
+                  onDragOver={(event) => handleCardDragOver(event, END_DROP_ZONE_ID)}
+                  onDragLeave={() => handleCardDragLeave(END_DROP_ZONE_ID)}
+                  onDrop={(event) => handleCardDrop(event, END_DROP_ZONE_ID)}
+                  sx={{
+                    border: '1px dashed',
+                    borderColor:
+                      activeDropTarget === END_DROP_ZONE_ID ? 'primary.light' : 'transparent',
+                    borderRadius: 2,
+                    minHeight: 36,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'text.secondary',
+                    fontSize: 13,
+                    fontStyle: 'italic',
+                    backgroundColor:
+                      activeDropTarget === END_DROP_ZONE_ID
+                        ? 'rgba(25, 118, 210, 0.04)'
+                        : 'transparent',
+                    transition: 'border-color 0.15s ease, background-color 0.15s ease',
+                  }}
+                >
+                  Drop here to send card to the bottom
+                </Box>
+              </Grid>
+            )}
           </Grid>
         </Stack>
       </Box>
     </Box>
+  )
+}
+
+function GroupRelationshipExplorer({ graph }) {
+  const nodesById = graph?.nodesById ?? new Map()
+  const ordered = graph?.ordered ?? []
+  const maxDegree = graph?.maxDegree ?? 0
+  const [selectedId, setSelectedId] = useState(() => ordered[0]?.id ?? null)
+
+  useEffect(() => {
+    if (!ordered.length) {
+      if (selectedId !== null) {
+        setSelectedId(null)
+      }
+      return
+    }
+    if (!selectedId || !nodesById.has(selectedId)) {
+      setSelectedId(ordered[0].id)
+    }
+  }, [ordered, nodesById, selectedId])
+
+  if (!ordered.length) {
+    return (
+      <Typography variant="body2" color="textSecondary">
+        Relationship data will appear once inheritance links are synced.
+      </Typography>
+    )
+  }
+
+  const selected = selectedId ? nodesById.get(selectedId) : null
+  const parentNodes =
+    selected?.parents?.map((id) => nodesById.get(id)).filter(Boolean) ?? []
+  const childNodes =
+    selected?.children?.map((id) => nodesById.get(id)).filter(Boolean) ?? []
+
+  const reachCounts = useMemo(() => {
+    if (!selectedId || !nodesById.has(selectedId)) {
+      return { ancestors: 0, descendants: 0 }
+    }
+
+    const traverse = (initialIds, direction) => {
+      const visited = new Set()
+      const queue = [...initialIds]
+      while (queue.length) {
+        const currentId = queue.shift()
+        if (!currentId || visited.has(currentId)) continue
+        visited.add(currentId)
+        const currentNode = nodesById.get(currentId)
+        if (!currentNode) continue
+        const nextIds = direction === 'up' ? currentNode.parents : currentNode.children
+        if (nextIds?.length) {
+          queue.push(...nextIds)
+        }
+      }
+      return visited.size
+    }
+
+    const selectedNode = nodesById.get(selectedId)
+    return {
+      ancestors: traverse(selectedNode?.parents || [], 'up'),
+      descendants: traverse(selectedNode?.children || [], 'down'),
+    }
+  }, [selectedId, nodesById])
+
+  const pathSamples = useMemo(() => {
+    if (!selectedId || !nodesById.has(selectedId)) {
+      return []
+    }
+    const results = []
+    const maxDepth = 3
+    const maxSamples = 5
+
+    const walk = (nodeId, path, depth) => {
+      const node = nodesById.get(nodeId)
+      if (!node) return
+      const nextPath = [...path, node]
+      const children = node.children || []
+      const reachedDepth = depth >= maxDepth
+      if (reachedDepth || children.length === 0) {
+        results.push(nextPath)
+        return
+      }
+      children.forEach((childId) => {
+        if (results.length >= maxSamples) return
+        if (nextPath.some((entry) => entry.id === childId)) return
+        walk(childId, nextPath, depth + 1)
+      })
+    }
+
+    walk(selectedId, [], 0)
+    if (!results.length) {
+      const selectedNode = nodesById.get(selectedId)
+      return selectedNode ? [[selectedNode]] : []
+    }
+    return results
+  }, [selectedId, nodesById])
+
+  const connectionScore = Math.round(
+    ((parentNodes.length + childNodes.length) / Math.max(maxDegree || 1, 1)) * 100
+  )
+
+  const RelationshipColumn = ({ title, groups, placeholder }) => (
+    <Paper variant="outlined" sx={{ p: 2, height: '100%' }}>
+      <Typography variant="subtitle2" color="textSecondary">
+        {title}
+      </Typography>
+      {groups.length ? (
+        <Stack spacing={1.5} sx={{ mt: 1 }}>
+          {groups.slice(0, 6).map((group) => (
+            <Box key={group.id}>
+              <Typography variant="body2" fontWeight={600} sx={{ wordBreak: 'break-word' }}>
+                {group.name || 'Unnamed group'}
+              </Typography>
+              <Typography variant="caption" color="textSecondary">
+                {group.module || 'Unassigned module'}
+              </Typography>
+            </Box>
+          ))}
+          {groups.length > 6 && (
+            <Typography variant="caption" color="textSecondary">
+              + {groups.length - 6} more
+            </Typography>
+          )}
+        </Stack>
+      ) : (
+        <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
+          {placeholder}
+        </Typography>
+      )}
+    </Paper>
+  )
+
+  const renderMetric = (label, value) => (
+    <Stack direction="row" justifyContent="space-between" alignItems="center" key={label}>
+      <Typography variant="body2" color="textSecondary">
+        {label}
+      </Typography>
+      <Typography variant="body1" fontWeight={600}>
+        {value}
+      </Typography>
+    </Stack>
+  )
+
+  return (
+    <Stack spacing={2}>
+      <Stack
+        direction={{ xs: 'column', md: 'row' }}
+        spacing={2}
+        alignItems={{ xs: 'stretch', md: 'flex-end' }}
+      >
+        <TextField
+          select
+          label="Focus group"
+          value={selectedId ?? ''}
+          onChange={(event) => setSelectedId(event.target.value)}
+          size="small"
+          sx={{ minWidth: { xs: '100%', md: 280 } }}
+        >
+          {ordered.map((node) => (
+            <MenuItem key={node.id} value={node.id}>
+              {node.name || `Group ${node.id}`}
+            </MenuItem>
+          ))}
+        </TextField>
+        <Box sx={{ flexGrow: 1 }}>
+          <Typography variant="caption" color="textSecondary">
+            Showing {ordered.length} synced groups. Most connected appear first.
+          </Typography>
+          <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap' }}>
+            <Chip label={`Direct parents: ${parentNodes.length}`} size="small" />
+            <Chip label={`Direct children: ${childNodes.length}`} size="small" />
+            <Chip label={`Module: ${selected?.module || 'Unassigned'}`} size="small" />
+            {selected?.role && <Chip label={`Role: ${selected.role}`} size="small" />}
+          </Stack>
+        </Box>
+      </Stack>
+
+      <Grid container spacing={2}>
+        <Grid item xs={12} md={4}>
+          <RelationshipColumn
+            title="Inherited From"
+            groups={parentNodes}
+            placeholder="No parents recorded."
+          />
+        </Grid>
+        <Grid item xs={12} md={4}>
+          <Paper variant="outlined" sx={{ p: 2, height: '100%' }}>
+            <Typography variant="subtitle2" color="textSecondary">
+              Selected Group
+            </Typography>
+            <Typography variant="h6" sx={{ mt: 0.5, wordBreak: 'break-word' }}>
+              {selected?.name || 'Select a group'}
+            </Typography>
+            <Stack spacing={1.5} sx={{ mt: 2 }}>
+              {renderMetric('Direct parents', parentNodes.length)}
+              {renderMetric('Direct children', childNodes.length)}
+              {renderMetric('Total ancestors', reachCounts.ancestors)}
+              {renderMetric('Downstream reach', reachCounts.descendants)}
+            </Stack>
+            <Box sx={{ mt: 3 }}>
+              <LinearProgress
+                variant="determinate"
+                value={Number.isNaN(connectionScore) ? 0 : Math.min(connectionScore, 100)}
+                sx={{ height: 8, borderRadius: '4px' }}
+              />
+              <Typography variant="caption" color="textSecondary">
+                Connection density compared to peers
+              </Typography>
+            </Box>
+          </Paper>
+        </Grid>
+        <Grid item xs={12} md={4}>
+          <RelationshipColumn
+            title="Delegates To"
+            groups={childNodes}
+            placeholder="No children recorded."
+          />
+        </Grid>
+      </Grid>
+
+      <Divider />
+
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="subtitle2" color="textSecondary">
+          Sample access paths
+        </Typography>
+        {pathSamples.length ? (
+          <Stack spacing={1.2} sx={{ mt: 1.5 }}>
+            {pathSamples.map((path) => (
+              <Stack
+                key={path.map((node) => node.id).join('-')}
+                direction="row"
+                alignItems="center"
+                spacing={0.5}
+                sx={{ flexWrap: 'wrap' }}
+              >
+                {path.map((node, index) => (
+                  <React.Fragment key={`${node.id}-${index}`}>
+                    <Chip label={node.name || 'Group'} size="small" sx={{ mb: 0.5 }} />
+                    {index < path.length - 1 && (
+                      <ArrowForwardIosIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                    )}
+                  </React.Fragment>
+                ))}
+              </Stack>
+            ))}
+          </Stack>
+        ) : (
+          <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
+            No downstream relationships were detected for this group.
+          </Typography>
+        )}
+      </Paper>
+    </Stack>
   )
 }
 

@@ -28,6 +28,7 @@ wheels/
 *.sqlite
 *.sqlite3
 data/
+app/local_state/
 
 # Node
 node_modules/

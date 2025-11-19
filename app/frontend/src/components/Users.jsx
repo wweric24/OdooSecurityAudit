@@ -15,12 +15,19 @@ import {
   MenuItem,
   Button,
   Checkbox,
+  Drawer,
+  List,
+  ListItem,
+  ListItemText,
+  Divider,
+  IconButton,
 } from '@mui/material'
 import { GridActionsCellItem } from '@mui/x-data-grid'
 import {
   Clear as ClearIcon,
   VisibilityOff as HideIcon,
   Visibility as UnhideIcon,
+  PeopleAlt as PeopleIcon,
 } from '@mui/icons-material'
 import { api } from '../api/client'
 import ConfigurableDataGrid from './common/ConfigurableDataGrid'
@@ -53,6 +60,11 @@ function Users() {
   const [showHidden, setShowHidden] = useState(false)
   const [actionSuccess, setActionSuccess] = useState(null)
   const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 50 })
+  const [hiddenDrawerOpen, setHiddenDrawerOpen] = useState(false)
+  const [hiddenUsersList, setHiddenUsersList] = useState([])
+  const [hiddenListLoading, setHiddenListLoading] = useState(false)
+  const [hiddenListError, setHiddenListError] = useState(null)
+  const [drawerActionId, setDrawerActionId] = useState(null)
 
   useEffect(() => {
     loadDepartments()
@@ -77,7 +89,10 @@ function Users() {
 
       if (selectedDepartment) {
         // Use department-specific endpoint
-        const response = await api.getUsersByDepartment(selectedDepartment, { include_hidden: showHidden })
+        const response = await api.getUsersByDepartment(selectedDepartment, {
+          include_hidden: showHidden,
+          hidden_only: showHidden,
+        })
         let filteredUsers = response.data.users
 
         // Apply client-side filters
@@ -98,10 +113,15 @@ function Users() {
             return true
           })
         }
+        filteredUsers = filteredUsers.filter((u) => (showHidden ? u.is_hidden : !u.is_hidden))
         setUsers(filteredUsers)
       } else {
         // Use general users endpoint with all filters
-        const params = { include_hidden: showHidden, limit: 1000 }
+        const params = { limit: 1000 }
+        if (showHidden) {
+          params.include_hidden = true
+          params.hidden_only = true
+        }
         if (search) params.search = search
         const response = await api.getUsers(params)
         let filteredUsers = response.data.users
@@ -119,14 +139,61 @@ function Users() {
             return true
           })
         }
+        filteredUsers = filteredUsers.filter((u) => (showHidden ? u.is_hidden : !u.is_hidden))
         setUsers(filteredUsers)
       }
       setError(null)
       setRowSelectionModel([]) // Clear selection when data refreshes
     } catch (err) {
-      setError(err.message)
+      console.error('Failed to load users', err)
+      const message = err.response?.data?.detail || err.message || 'Failed to load users'
+      setError(message)
+      setUsers([])
+      setRowSelectionModel([])
     } finally {
       setLoading(false)
+    }
+  }
+
+  const fetchHiddenUsers = async () => {
+    try {
+      setHiddenListLoading(true)
+      const response = await api.getUsers({ hidden_only: true, include_hidden: true, limit: 1000 })
+      setHiddenUsersList(response.data.users || [])
+      setHiddenListError(null)
+      return response
+    } catch (err) {
+      const message = err.response?.data?.detail || err.message || 'Failed to load hidden users'
+      setHiddenListError(message)
+      return null
+    } finally {
+      setHiddenListLoading(false)
+    }
+  }
+
+  const handleOpenHiddenDrawer = () => {
+    setHiddenDrawerOpen(true)
+    fetchHiddenUsers()
+  }
+
+  const handleCloseHiddenDrawer = () => {
+    setHiddenDrawerOpen(false)
+  }
+
+  const handleDrawerUnhide = async (userId) => {
+    if (!userId) return
+    try {
+      setDrawerActionId(userId)
+      await api.unhideUsers([userId])
+      setActionSuccess('User unhidden successfully')
+      setError(null)
+      await loadUsers()
+      await fetchHiddenUsers()
+    } catch (err) {
+      const message = err.response?.data?.detail || err.message || 'Failed to unhide user'
+      setHiddenListError(message)
+    } finally {
+      setDrawerActionId(null)
     }
   }
 
@@ -138,24 +205,32 @@ function Users() {
   }
 
   const handleHide = async () => {
+    if (!rowSelectionModel.length) return
     try {
       setError(null)
       const response = await api.hideUsers(rowSelectionModel)
       setActionSuccess(`Successfully hid ${response.data.hidden_count} user(s)`)
       setTimeout(() => setActionSuccess(null), 3000)
-      loadUsers()
+      await loadUsers()
+      if (hiddenDrawerOpen) {
+        await fetchHiddenUsers()
+      }
     } catch (err) {
       setError(err.response?.data?.detail || err.message || 'Failed to hide users')
     }
   }
 
   const handleUnhide = async () => {
+    if (!rowSelectionModel.length) return
     try {
       setError(null)
       const response = await api.unhideUsers(rowSelectionModel)
       setActionSuccess(`Successfully unhid ${response.data.unhidden_count} user(s)`)
       setTimeout(() => setActionSuccess(null), 3000)
-      loadUsers()
+      await loadUsers()
+      if (hiddenDrawerOpen) {
+        await fetchHiddenUsers()
+      }
     } catch (err) {
       setError(err.response?.data?.detail || err.message || 'Failed to unhide users')
     }
@@ -456,17 +531,27 @@ function Users() {
         sx={{ mb: 2 }}
       >
         <Typography variant="h4">Users</Typography>
-        <FormControl sx={{ minWidth: 180 }} size="small">
-          <InputLabel>View</InputLabel>
-          <Select
-            value={showHidden ? 'hidden' : 'visible'}
-            label="View"
-            onChange={(e) => setShowHidden(e.target.value === 'hidden')}
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems="stretch">
+          <FormControl sx={{ minWidth: 180 }} size="small">
+            <InputLabel>View</InputLabel>
+            <Select
+              value={showHidden ? 'hidden' : 'visible'}
+              label="View"
+              onChange={(e) => setShowHidden(e.target.value === 'hidden')}
+            >
+              <MenuItem value="visible">Visible Users</MenuItem>
+              <MenuItem value="hidden">Hidden Users</MenuItem>
+            </Select>
+          </FormControl>
+          <Button
+            variant="outlined"
+            startIcon={<PeopleIcon />}
+            onClick={handleOpenHiddenDrawer}
+            sx={{ whiteSpace: 'nowrap' }}
           >
-            <MenuItem value="visible">Visible Users</MenuItem>
-            <MenuItem value="hidden">Hidden Users</MenuItem>
-          </Select>
-        </FormControl>
+            Hidden User List
+          </Button>
+        </Stack>
       </Stack>
 
       <Box sx={panelStyle}>
@@ -641,6 +726,75 @@ function Users() {
           )}
         </Box>
       </Box>
+
+      <Drawer anchor="right" open={hiddenDrawerOpen} onClose={handleCloseHiddenDrawer}>
+        <Box sx={{ width: { xs: 320, sm: 380 }, p: 3 }} role="presentation">
+          <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+            <Typography variant="h6">
+              Hidden Users ({hiddenUsersList.length})
+            </Typography>
+            <IconButton aria-label="Close hidden users" onClick={handleCloseHiddenDrawer}>
+              <ClearIcon />
+            </IconButton>
+          </Stack>
+
+          {hiddenListError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {hiddenListError}
+            </Alert>
+          )}
+
+          {hiddenListLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 160 }}>
+              <CircularProgress size={32} />
+            </Box>
+          ) : hiddenUsersList.length === 0 ? (
+            <Typography color="text.secondary">No users are currently hidden.</Typography>
+          ) : (
+            <List disablePadding>
+              {hiddenUsersList.map((user, idx) => (
+                <React.Fragment key={user.id ?? user.email ?? `hidden-${idx}`}>
+                  <ListItem alignItems="flex-start" sx={{ gap: 1 }}>
+                    <ListItemText
+                      primary={user.name || user.email || 'Unnamed User'}
+                      secondary={(
+                        <Stack spacing={0.3}>
+                          {user.email && (
+                            <Typography variant="body2" color="text.secondary">
+                              {user.email}
+                            </Typography>
+                          )}
+                          {user.department && (
+                            <Typography variant="body2" color="text.secondary">
+                              Department: {user.department}
+                            </Typography>
+                          )}
+                          {user.source_system && (
+                            <Typography variant="body2" color="text.secondary">
+                              Source: {user.source_system}
+                            </Typography>
+                          )}
+                        </Stack>
+                      )}
+                    />
+                    <Button
+                      variant="contained"
+                      color="primary"
+                      size="small"
+                      startIcon={<UnhideIcon />}
+                      onClick={() => handleDrawerUnhide(user.id)}
+                      disabled={drawerActionId === user.id}
+                    >
+                      {drawerActionId === user.id ? 'Working...' : 'Unhide'}
+                    </Button>
+                  </ListItem>
+                  {idx < hiddenUsersList.length - 1 && <Divider component="li" sx={{ my: 1 }} />}
+                </React.Fragment>
+              ))}
+            </List>
+          )}
+        </Box>
+      </Drawer>
     </Box>
   )
 }

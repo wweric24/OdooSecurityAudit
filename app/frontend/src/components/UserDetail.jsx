@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Box,
@@ -11,19 +11,13 @@ import {
   Grid,
   Chip,
   Divider,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Paper,
   Stack,
 } from '@mui/material'
 import {
   ArrowBack as ArrowBackIcon,
 } from '@mui/icons-material'
 import { api } from '../api/client'
+import ConfigurableDataGrid from './common/ConfigurableDataGrid'
 
 const panelStyle = {
   backgroundColor: '#fff',
@@ -39,12 +33,187 @@ const panelStyle = {
 const AZURE_COLOR = '#1976d2' // Blue
 const ODOO_COLOR = '#9c27b0' // Light purple
 
+const formatLastAuditLabel = (value) => {
+  if (!value) return 'Not Audited'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleDateString()
+}
+
+const getStatusChipColor = (status) => {
+  if (!status) return 'default'
+  const normalized = status.toLowerCase()
+  if (normalized.includes('active') || normalized.includes('confirm')) return 'success'
+  if (normalized.includes('deprecated') || normalized.includes('legacy')) return 'warning'
+  if (normalized.includes('pending') || normalized.includes('review')) return 'info'
+  if (normalized.includes('risk') || normalized.includes('issue')) return 'error'
+  return 'default'
+}
+
 function UserDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+
+  const groupRows = useMemo(() => {
+    if (!user || !Array.isArray(user.groups)) {
+      return []
+    }
+
+    return user.groups
+      .filter(Boolean)
+      .map((group, index) => {
+        const resolvedId =
+          typeof group.id === 'number' || typeof group.id === 'string'
+            ? group.id
+            : `group-${index}`
+
+        return {
+          id: resolvedId,
+          groupId: group.id ?? null,
+          name: group.name || `Group ${index + 1}`,
+          module: group.module || 'Unassigned Module',
+          status: group.status || 'Not Set',
+          source_system: group.source_system || 'Unknown Source',
+          is_documented: Boolean(group.is_documented),
+          follows_naming_convention: Boolean(group.follows_naming_convention),
+          has_required_fields: Boolean(group.has_required_fields),
+          last_audit_date: group.last_audit_date || null,
+          is_overdue_audit: Boolean(group.is_overdue_audit),
+        }
+      })
+  }, [user])
+
+  const groupColumns = useMemo(
+    () => [
+      {
+        field: 'name',
+        headerName: 'Security Group',
+        flex: 1.4,
+        minWidth: 200,
+        renderCell: (params) => (
+          <Typography variant="body2" fontWeight={600}>
+            {params.value}
+          </Typography>
+        ),
+      },
+      {
+        field: 'module',
+        headerName: 'Application / Module',
+        flex: 1.1,
+        minWidth: 170,
+        valueGetter: (params) => params.value || 'Unassigned Module',
+        renderCell: (params) => (
+          <Typography variant="body2" color="textSecondary">
+            {params.value || 'Unassigned Module'}
+          </Typography>
+        ),
+      },
+      {
+        field: 'status',
+        headerName: 'Status',
+        flex: 0.8,
+        minWidth: 130,
+        renderCell: (params) =>
+          params.value ? (
+            <Chip
+              label={params.value}
+              size="small"
+              color={getStatusChipColor(params.value)}
+              variant="outlined"
+            />
+          ) : (
+            <Typography variant="caption" color="textSecondary">
+              -
+            </Typography>
+          ),
+      },
+      {
+        field: 'documentation',
+        headerName: 'Documentation Health',
+        flex: 1.3,
+        minWidth: 220,
+        sortable: false,
+        filterable: false,
+        renderCell: (params) => (
+          <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap' }}>
+            <Chip
+              label={params.row.is_documented ? 'Documented' : 'Missing Docs'}
+              size="small"
+              color={params.row.is_documented ? 'success' : 'warning'}
+            />
+            <Chip
+              label={params.row.follows_naming_convention ? 'Naming OK' : 'Naming Gap'}
+              size="small"
+              color={params.row.follows_naming_convention ? 'info' : 'default'}
+              variant={params.row.follows_naming_convention ? 'filled' : 'outlined'}
+            />
+          </Stack>
+        ),
+      },
+      {
+        field: 'last_audit_date',
+        headerName: 'Last Audit',
+        flex: 0.9,
+        minWidth: 170,
+        valueGetter: (params) => params.row.last_audit_date,
+        renderCell: (params) => (
+          <Stack direction="row" spacing={0.5} alignItems="center">
+            <Typography variant="body2">
+              {formatLastAuditLabel(params.row.last_audit_date)}
+            </Typography>
+            {params.row.is_overdue_audit && (
+              <Chip label="Overdue" size="small" color="error" variant="outlined" />
+            )}
+          </Stack>
+        ),
+      },
+      {
+        field: 'source_system',
+        headerName: 'Source',
+        flex: 0.8,
+        minWidth: 140,
+        valueGetter: (params) => params.value || 'Unknown Source',
+        renderCell: (params) => (
+          <Typography variant="body2">{params.value || 'Unknown Source'}</Typography>
+        ),
+      },
+      {
+        field: 'actions',
+        headerName: 'Actions',
+        width: 140,
+        sortable: false,
+        filterable: false,
+        renderCell: (params) => {
+          const targetId = params.row.groupId ?? params.row.id
+          return (
+            <Button
+              size="small"
+              variant="outlined"
+              disabled={!params.row.groupId}
+              onClick={(event) => {
+                event.stopPropagation()
+                if (!params.row.groupId) {
+                  return
+                }
+                navigate(`/groups/${params.row.groupId}`)
+              }}
+            >
+              View Group
+            </Button>
+          )
+        },
+      },
+    ],
+    [navigate]
+  )
+
+  const groupTableHeight = Math.min(
+    600,
+    Math.max(320, 120 + Math.max(groupRows.length, 1) * 48)
+  )
 
   useEffect(() => {
     loadUser()
@@ -219,33 +388,27 @@ function UserDetail() {
                 </Typography>
                 <Divider sx={{ mb: 2 }} />
 
-                {user.groups && user.groups.length > 0 ? (
-                  <TableContainer component={Paper} variant="outlined">
-                    <Table size="small">
-                      <TableHead>
-                        <TableRow>
-                          <TableCell>Group Name</TableCell>
-                          <TableCell>Actions</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {user.groups.map((group) => (
-                          <TableRow key={group.id}>
-                            <TableCell>{group.name}</TableCell>
-                            <TableCell>
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                onClick={() => navigate(`/groups/${group.id}`)}
-                              >
-                                View Group
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
+                {groupRows.length > 0 ? (
+                  <ConfigurableDataGrid
+                    storageKey={`user-${user.id}-groups`}
+                    columns={groupColumns}
+                    rows={groupRows}
+                    height={groupTableHeight}
+                    density="compact"
+                    hideFooter={groupRows.length <= 10}
+                    disableRowSelectionOnClick
+                    onRowClick={(params) => {
+                      if (!params || !params.row || !params.row.groupId) {
+                        return
+                      }
+                      navigate(`/groups/${params.row.groupId}`)
+                    }}
+                    sx={{
+                      '& .MuiDataGrid-row': {
+                        cursor: 'pointer',
+                      },
+                    }}
+                  />
                 ) : (
                   <Typography variant="body2" color="textSecondary">
                     No groups assigned

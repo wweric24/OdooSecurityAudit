@@ -49,13 +49,14 @@ API docs: `http://localhost:3200/docs`
 
 UI: `http://localhost:3100`
 
-## First Import
+## First Data Load
 
 1. Start both backend and frontend servers
 2. Open `http://localhost:3000` in your browser
-3. Open the **Data & Integrations** tab
-4. Under **CSV Import**, upload the latest Odoo export (e.g., `reference docs/Access Groups (res.groups).csv`)
-5. After the success message, explore Dashboard, Groups, Users, and Analysis
+3. Go to the **Data & Integrations** tab
+4. Run the Azure sync (uses Microsoft Graph or the configured mock payload)
+5. Run the Odoo sync (Postgres DSN or mock JSON)
+6. After both runs succeed, explore Dashboard, Groups, Users, and Analysis
 
 ## Docker Deployment (Optional)
 
@@ -69,10 +70,10 @@ This will start both backend and serve the frontend.
 
 ## Troubleshooting
 
-### Import Issues
-- Ensure the CSV file path is correct
-- Check that the CSV file has the expected columns: Group Name, Group Purpose, Group Status, User Access, Users, Inherits
-- Verify the file encoding is UTF-8 (with or without BOM)
+### Sync Issues
+- Verify Azure and Odoo connection settings in `.env`
+- Enable `ALLOW_MOCK_SYNCS=true` to use the sample JSON payloads while testing locally
+- Check FastAPI logs for detailed error traces and SQL statements
 
 ### Database Issues
 - Delete `data/security.db` and reinitialize if needed

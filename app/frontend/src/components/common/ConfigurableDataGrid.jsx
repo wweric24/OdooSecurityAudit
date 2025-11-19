@@ -8,7 +8,6 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
-  FormGroup,
   FormControlLabel,
   Checkbox,
   TextField,
@@ -18,6 +17,7 @@ import {
 import {
   Settings as SettingsIcon,
   FileDownload as FileDownloadIcon,
+  DragIndicator as DragIndicatorIcon,
 } from '@mui/icons-material'
 import { DataGrid, useGridApiRef } from '@mui/x-data-grid'
 
@@ -97,6 +97,7 @@ const ConfigurableDataGrid = ({
   const [columnOrder, setColumnOrder] = useState(() =>
     readSetting(storageKey, 'order', null)
   )
+  const [draggingField, setDraggingField] = useState(null)
 
   useEffect(() => {
     if (!columnOrder) return
@@ -130,6 +131,10 @@ const ConfigurableDataGrid = ({
     })
     return ordered
   }, [columns, columnOrder])
+  const orderedColumnFields = useMemo(
+    () => orderedColumns.map((col) => col.field),
+    [orderedColumns]
+  )
 
   const checkboxSelectionEnabled = Boolean(checkboxSelection && rows.length)
   const hasControlledRowSelection =
@@ -176,6 +181,11 @@ const ConfigurableDataGrid = ({
     }
   }
 
+  const applyColumnOrder = (nextOrder) => {
+    setColumnOrder(nextOrder)
+    persistSetting('order', nextOrder)
+  }
+
   const handleExport = () => {
     if (!apiRef.current) return
     apiRef.current.exportDataAsCsv({
@@ -195,12 +205,8 @@ const ConfigurableDataGrid = ({
 
   const refreshColumnOrderSnapshot = () => {
     if (!apiRef.current) return
-    const orderedFields = apiRef
-      .current
-      .getAllColumns()
-      .map((col) => col.field)
-    setColumnOrder(orderedFields)
-    persistSetting('order', orderedFields)
+    const orderedFields = apiRef.current.getAllColumns().map((col) => col.field)
+    applyColumnOrder(orderedFields)
   }
 
   const handleColumnOrderChange = (params, event, details) => {
@@ -208,6 +214,65 @@ const ConfigurableDataGrid = ({
     if (typeof externalOrderChange === 'function') {
       externalOrderChange(params, event, details)
     }
+  }
+
+  const reorderColumnsByFields = (sourceField, targetField = null, dropAfter = false) => {
+    if (!sourceField) return
+    const baseOrder = [...orderedColumnFields]
+    if (!baseOrder.length) return
+    const fromIndex = baseOrder.indexOf(sourceField)
+    if (fromIndex === -1) return
+    const [moved] = baseOrder.splice(fromIndex, 1)
+    if (targetField) {
+      let targetIndex = baseOrder.indexOf(targetField)
+      if (targetIndex === -1) {
+        baseOrder.push(moved)
+      } else {
+        if (dropAfter) {
+          targetIndex += 1
+        }
+        baseOrder.splice(targetIndex, 0, moved)
+      }
+    } else {
+      baseOrder.push(moved)
+    }
+    applyColumnOrder(baseOrder)
+  }
+
+  const handleDragStart = (field) => (event) => {
+    setDraggingField(field)
+    if (event?.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move'
+      event.dataTransfer.setData('text/plain', field)
+    }
+  }
+
+  const handleDragEnd = () => {
+    setDraggingField(null)
+  }
+
+  const handleDragOver = (event) => {
+    event.preventDefault()
+    if (event?.dataTransfer) {
+      event.dataTransfer.dropEffect = 'move'
+    }
+  }
+
+  const handleColumnDrop = (field) => (event) => {
+    event.preventDefault()
+    if (!draggingField) return
+    const rect = event.currentTarget.getBoundingClientRect()
+    const pointerY = event.clientY ?? event.nativeEvent?.clientY ?? 0
+    const dropAfter = pointerY - rect.top > rect.height / 2
+    reorderColumnsByFields(draggingField, field, dropAfter)
+    setDraggingField(null)
+  }
+
+  const handleDropToEnd = (event) => {
+    event.preventDefault()
+    if (!draggingField) return
+    reorderColumnsByFields(draggingField, null, true)
+    setDraggingField(null)
   }
 
   const isPaginationEnabled =
@@ -261,10 +326,9 @@ const ConfigurableDataGrid = ({
   const handleResetView = () => {
     setColumnVisibilityModel({})
     setQuickFilter('')
-    setColumnOrder(columns.map((col) => col.field))
+    applyColumnOrder(columns.map((col) => col.field))
     persistSetting('visibility', {})
     persistSetting('quickFilter', '')
-    persistSetting('order', columns.map((col) => col.field))
     if (apiRef.current) {
       apiRef.current.setQuickFilterValues([])
     }
@@ -346,26 +410,77 @@ const ConfigurableDataGrid = ({
           />
           <Divider sx={{ my: 2 }} />
           <Typography variant="subtitle2" sx={{ mb: 1 }}>
-            Columns
+            Columns (drag to reorder)
           </Typography>
-          <FormGroup>
-            {orderedColumns.map((column) => (
-              <FormControlLabel
-                key={column.field}
-                control={
-                  <Checkbox
-                    checked={
-                      columnVisibilityModel[column.field] !== false
+          <Stack spacing={1}>
+            {orderedColumns.map((column) => {
+              const isDragging = draggingField === column.field
+              return (
+                <Box
+                  key={column.field}
+                  onDragOver={handleDragOver}
+                  onDrop={handleColumnDrop(column.field)}
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    px: 1,
+                    py: 0.5,
+                    borderRadius: 1,
+                    border: '1px solid',
+                    borderColor: isDragging ? 'primary.main' : 'divider',
+                    bgcolor: isDragging ? 'action.hover' : 'transparent',
+                  }}
+                >
+                  <Box
+                    component="span"
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      color: 'text.secondary',
+                      cursor: 'grab',
+                    }}
+                    draggable
+                    onDragStart={handleDragStart(column.field)}
+                    onDragEnd={handleDragEnd}
+                  >
+                    <DragIndicatorIcon fontSize="small" />
+                  </Box>
+                  <FormControlLabel
+                    sx={{ flex: 1, m: 0 }}
+                    control={
+                      <Checkbox
+                        checked={columnVisibilityModel[column.field] !== false}
+                        onChange={(event) =>
+                          handleToggleColumn(column.field, event.target.checked)
+                        }
+                      />
                     }
-                    onChange={(event) =>
-                      handleToggleColumn(column.field, event.target.checked)
-                    }
+                    label={column.headerName || column.field}
                   />
-                }
-                label={column.headerName || column.field}
-              />
-            ))}
-          </FormGroup>
+                </Box>
+              )
+            })}
+          </Stack>
+          {orderedColumns.length > 0 && (
+            <Box
+              onDragOver={handleDragOver}
+              onDrop={handleDropToEnd}
+              sx={{
+                mt: 1,
+                px: 1,
+                py: 0.75,
+                borderRadius: 1,
+                border: '1px dashed',
+                borderColor: 'divider',
+                textAlign: 'center',
+                fontSize: 12,
+                color: 'text.secondary',
+              }}
+            >
+              Drop here to move a column to the end
+            </Box>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={handleResetView}>Reset</Button>

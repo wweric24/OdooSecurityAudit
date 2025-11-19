@@ -49,15 +49,12 @@
   - Fast performance (comparable to Node.js)
   - Automatic API documentation (OpenAPI/Swagger)
   - Built-in data validation with Pydantic
-  - Excellent CSV/data processing capabilities
+  - Excellent data processing performance
   - Easy to learn Python syntax
   - Strong typing support
 - **Key Libraries**:
-  - `pandas` - CSV processing and data manipulation
-  - `beautifulsoup4` or `html.parser` - HTML parsing from CSV fields
   - `pydantic` - Data validation and models
   - `sqlalchemy` - ORM for database operations
-  - `python-multipart` - File upload handling
   - `python-jose` - JWT authentication (if needed)
 
 **Alternative: Flask** (if team prefers)
@@ -133,12 +130,12 @@
 │              FastAPI Backend Server                         │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │              API Endpoints                            │   │
-│  │  /api/import    /api/groups    /api/users            │   │
-│  │  /api/analysis  /api/compliance  /api/export         │   │
+�  �  /api/sync/azure-users  /api/sync/odoo-db     �   �
+�  �  /api/groups  /api/users  /api/analysis  /api/export  �   �
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │         Business Logic Layer                          │   │
-│  │  • CSV Parser    • Standards Validator                │   │
+│  │  • Sync Orchestrator  • Standards Validator                │   │
 │  │  • Compliance Checker  • Gap Analyzer                 │   │
 │  │  • Hierarchy Builder  • Audit Tracker                 │   │
 │  └──────────────────────────────────────────────────────┘   │
@@ -161,72 +158,20 @@
 
 ## Data Flow Diagram
 
-### CSV Import Process
+### Data Sync Process
 
-```
-┌─────────────────┐
-│  User uploads   │
-│  Odoo CSV file  │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────────────────────────┐
-│  FastAPI /api/import endpoint      │
-│  • Receives multipart file upload  │
-│  • Validates file type/size        │
-└────────┬────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────┐
-│  CSV Parser Module                  │
-│  • Reads CSV line by line           │
-│  • Handles continuation rows        │
-│  • Extracts:                        │
-│    - Group Name                     │
-│    - Group Purpose (HTML)           │
-│    - Group Status                   │
-│    - User Access (HTML)             │
-│    - Users (list)                   │
-│    - Inherits                       │
-└────────┬────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────┐
-│  Data Transformation                │
-│  • Parse HTML to text               │
-│  • Extract Module from name         │
-│  • Extract Access Level             │
-│  • Build inheritance chains         │
-│  • Aggregate users per group        │
-│  • Normalize data structure          │
-└────────┬────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────┐
-│  Standards Validator                │
-│  • Check naming convention           │
-│  • Validate required fields         │
-│  • Detect hierarchy levels           │
-│  • Flag compliance issues            │
-└────────┬────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────┐
-│  Database Storage (SQLite)          │
-│  • Store groups                     │
-│  • Store users                      │
-│  • Store inheritance                │
-│  • Record import history            │
-└────────┬────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────────┐
-│  Response to Frontend               │
-│  • Import summary                   │
-│  • Validation errors (if any)       │
-│  • Statistics                       │
-└─────────────────────────────────────┘
-```
+**Azure Directory Sync**
+1. User clicks "Sync Azure Directory" on the Data tab.
+2. FastAPI calls Microsoft Graph using the configured client credentials.
+3. Responses are normalized into `users` rows with azure metadata.
+4. A `sync_runs` record captures statistics (processed, created, updated).
+
+**Odoo Postgres Sync**
+1. User selects PREPROD/PROD and clicks "Sync Odoo DB".
+2. FastAPI connects to the Postgres replica via psycopg (`ODOO_PREPROD_DSN` or `ODOO_PROD_DSN`).
+3. Groups, users, memberships, and inheritance chains are upserted via SQLAlchemy.
+4. Access metadata (purpose, allowed functions, hierarchy) is updated along with `synced_from_postgres_at`.
+5. A `sync_runs` record documents counts and last run status.
 
 ---
 
@@ -259,9 +204,10 @@
           │  API Service     │
           │  (Axios/Fetch)    │
           │                   │
-          │  • getGroups()    │
-          │  • getUsers()     │
-          │  • importCSV()    │
+          │  • syncAzure()   │
+          │  • syncOdoo()    │
+          │  • getGroups()   │
+          │  • getUsers()    │
           │  • getAnalysis() │
           └─────────┬─────────┘
                     │
@@ -325,17 +271,17 @@
 │ assigned_date        │
 └──────────────────────┘
 
-┌─────────────────────┐
-│    ImportHistory    │
-├─────────────────────┤
-│ id (PK)             │
-│ import_date         │
-│ filename            │
-│ total_groups        │
-│ total_users         │
-│ status              │
-│ notes               │
-└─────────────────────┘
+���������������������Ŀ
+�       SyncRuns      �
+���������������������Ĵ
+� id (PK)             �
+� sync_type          �
+� status             �
+� started_at         �
+� completed_at       �
+� stats (JSON)       �
+� error_message      �
+������������������������
 ```
 
 ---
@@ -344,64 +290,18 @@
 
 ### User Journey: Import and Analyze
 
-```
-1. User opens application
-   │
-   ▼
-2. Dashboard shows current state (if data exists)
-   │
-   ▼
-3. User clicks "Import CSV"
-   │
-   ▼
-4. File upload dialog
-   │
-   ▼
-5. Backend processes CSV
-   │  • Parses data
-   │  • Validates structure
-   │  • Checks standards compliance
-   │  • Stores in database
-   │
-   ▼
-6. Import summary displayed
-   │  • Total groups imported
-   │  • Validation errors
-   │  • Compliance issues
-   │
-   ▼
-7. User navigates to Groups view
-   │
-   ▼
-8. Sees list of all groups
-   │  • Filter by module, status
-   │  • Search by name
-   │  • Sort by compliance
-   │
-   ▼
-9. Clicks on a group
-   │
-   ▼
-10. Group detail view
-    │  • Full information
-    │  • User assignments
-    │  • Inheritance chain
-    │  • Compliance status
-    │
-    ▼
-11. User navigates to Analysis
-    │
-    ▼
-12. Runs compliance check
-    │  • Naming violations
-    │  • Missing documentation
-    │  • Hierarchy issues
-    │
-    ▼
-13. Generates report
-    │  • Exports to PDF/CSV
-    │  • Shares with team
-```
+1. User opens the application and lands on the dashboard.
+2. Dashboard shows the last Azure/Odoo sync status plus key metrics.
+3. User opens the Data tab and runs **Sync Azure Directory**.
+4. A toast and status chip confirm rows processed/created/updated.
+5. User runs **Sync Odoo DB** for the selected environment.
+6. Groups, users, and memberships refresh; history grid updates.
+7. User navigates to the Groups view to explore newly synced data.
+8. Filters (module, status, search) highlight specific cohorts.
+9. Selecting a group shows documentation, users, inheritance, and compliance flags.
+10. User switches to Analysis to run compliance/gap checks.
+11. Reports are exported (CSV/PDF) or shared with stakeholders.
+
 
 ---
 
@@ -414,7 +314,6 @@
 | **UI Components** | Material-UI | Pre-built components | Ant Design, Chakra UI |
 | **State Management** | Zustand | Lightweight state | Redux Toolkit, Jotai |
 | **Backend Framework** | FastAPI (Python) | API server and business logic | Flask, Django, Node.js |
-| **CSV Processing** | Pandas | Data manipulation | csv module, polars |
 | **HTML Parsing** | BeautifulSoup4 | Extract text from HTML | html.parser, lxml |
 | **Database** | SQLite | Data storage | PostgreSQL, MySQL |
 | **ORM** | SQLAlchemy | Database abstraction | SQLModel, Peewee |
@@ -437,7 +336,6 @@ services:
       - "8000:8000"
     volumes:
       - ./data:/app/data  # SQLite database
-      - ./uploads:/app/uploads  # CSV uploads
     environment:
       - DATABASE_URL=sqlite:///./data/security.db
       
@@ -513,7 +411,6 @@ services:
 ## Development Phases
 
 ### Phase 1: MVP (Minimum Viable Product)
-- CSV import
 - Basic group listing
 - Simple visualization
 - Compliance checking
@@ -540,7 +437,6 @@ services:
   - Memoization for expensive computations
   
 - **Backend**:
-  - Async file processing for large CSVs
   - Database indexing on frequently queried fields
   - Caching for analysis results
   

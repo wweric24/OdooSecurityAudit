@@ -32,6 +32,9 @@ class Settings:
 
     sync_page_size: int = int(os.getenv("SYNC_PAGE_SIZE", "500"))
     allow_mock_syncs: bool = _bool(os.getenv("ALLOW_SYNC_MOCKS", "1"))
+    hidden_user_registry: str = os.getenv(
+        "HIDDEN_USER_REGISTRY", "app/local_state/hidden_users.json"
+    )
 
     def resolve_mock_path(self, path: Optional[str]) -> Optional[Path]:
         if not path:
@@ -75,6 +78,26 @@ class Settings:
         if self.odoo_environment.upper() == "PROD":
             return "Production"
         return "Pre-Production"
+
+    def _resolve_project_path(self, value: Optional[str]) -> Optional[Path]:
+        """Resolve a potentially relative path against the project root."""
+        if not value:
+            return None
+        candidate = Path(value)
+        if candidate.is_absolute():
+            return candidate
+        project_root = Path(__file__).resolve().parents[2]
+        return project_root / candidate
+
+    @property
+    def hidden_user_registry_path(self) -> Path:
+        """Return the filesystem location for persisting hidden-user choices."""
+        path = self._resolve_project_path(self.hidden_user_registry)
+        if path is None:
+            # Fallback to default path near project root if env var is blank
+            project_root = Path(__file__).resolve().parents[2]
+            path = project_root / "app" / "local_state" / "hidden_users.json"
+        return path
 
     def get_config_status(self) -> dict:
         """Return configuration status for all integrations."""

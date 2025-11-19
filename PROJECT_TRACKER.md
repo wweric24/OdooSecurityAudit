@@ -30,11 +30,7 @@ This project tracker monitors the progress of the Odoo Security Framework Review
 
 ### ✅ Completed Features
 
-- [x] **CSV Import Functionality**
-  - File upload and parsing
-  - Data validation
-  - Import history tracking
-  - Handles large CSV files (13,057+ rows)
+- [-] **Legacy CSV Import** (retired in favor of live Azure/Odoo syncs)
 
 - [x] **Dashboard**
   - Statistics overview

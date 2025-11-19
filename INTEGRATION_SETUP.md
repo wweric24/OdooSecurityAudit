@@ -6,13 +6,14 @@ End-to-end instructions for configuring Microsoft Entra (Azure AD) and Odoo/Post
 
 ## 1. Overview
 
-The application exposes three ingestion paths under **Data & Integrations**:
+The application exposes two ingestion paths under **Data & Integrations**:
 
-1. **Azure Directory Sync** – pulls users, email, department, and account state from Entra via Microsoft Graph.
-2. **Odoo Postgres Sync** – connects directly to the Odoo database (read-only) to capture groups, users, memberships, and inheritance.
-3. **CSV Import** – fallback when direct DB access isn’t available.
+1. **Azure Directory Sync** - pulls users, email, department, and account state from Entra via Microsoft Graph.
+2. **Odoo Postgres Sync** - connects directly to the Odoo database (read-only) to capture groups, users, memberships, and inheritance.
 
-This guide focuses on the first two, including prerequisites, environment variables, and how the data flows into SQLite for analysis.
+(Legacy note: CSV uploads have been retired now that both source systems are accessible directly.)
+
+This guide focuses on configuring the live syncs, including prerequisites, environment variables, and how the data flows into SQLite for analysis.
 
 ---
 
@@ -285,7 +286,6 @@ Odoo Postgres -> psycopg queries -> sync_runs(odoo_postgres)
                -> users table (odoo_user_id)
                -> user_group_association & group_inheritance
 
-CSV Import -> DATA tab uploader -> ImportHistory + security_groups/users (baseline seed)
 ```
 
 **Analysis Pipeline**

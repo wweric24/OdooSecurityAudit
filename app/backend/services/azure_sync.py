@@ -10,6 +10,7 @@ import msal
 from sqlalchemy.orm import Session
 
 from app.backend.settings import settings
+from app.backend.services.hidden_user_registry import hidden_user_registry
 from app.backend.services.sync_runs import create_sync_run, complete_sync_run
 from app.data.models import User
 
@@ -100,6 +101,7 @@ def _upsert_users(db: Session, users: Iterable[Dict]) -> Dict[str, int]:
         user.department = department
         user.source_system = "Azure"
         user.last_seen_in_azure_at = now
+        hidden_user_registry.apply_hidden_flag(user)
         db.add(user)
 
     db.commit()

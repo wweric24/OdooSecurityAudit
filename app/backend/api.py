@@ -1,9 +1,9 @@
 """
 FastAPI backend for Odoo Security Management Application.
 """
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy import func, or_, case
 from sqlalchemy.orm import Session, joinedload, aliased
@@ -12,8 +12,7 @@ from typing import Dict, List, Optional
 import csv
 import io
 import os
-import tempfile
-from datetime import datetime, date, timezone
+from datetime import date
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -22,10 +21,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from dotenv import load_dotenv
 load_dotenv()
 
-from app.backend.database import get_db, init_db
+from app.backend.database import get_db, init_db, SessionLocal
 from app.backend.settings import settings
 from app.backend.services.azure_sync import sync_azure_users
 from app.backend.services.odoo_sync import sync_odoo_postgres
+from app.backend.services.hidden_user_registry import hidden_user_registry
 from app.backend.services.sync_runs import list_recent_syncs, serialize_sync_run
 from app.backend.services.comparison_service import (
     run_user_comparison,
@@ -36,13 +36,11 @@ from app.backend.services.comparison_service import (
 from app.data.models import (
     SecurityGroup,
     User,
-    ImportHistory,
     user_group_association,
     AccessRight,
     ComparisonResult,
     group_inheritance,
 )
-from app.data.csv_parser import CSVParser
 
 app = FastAPI(
     title="Odoo Security Management API",
@@ -63,10 +61,11 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     init_db()
-
-# Standards config path
-STANDARDS_CONFIG = os.path.join(os.path.dirname(__file__), "..", "config", "standards.json")
-
+    db = SessionLocal()
+    try:
+        hidden_user_registry.sync_from_database(db)
+    finally:
+        db.close()
 
 class GroupUpdateRequest(BaseModel):
     """Payload for updating group documentation/status."""
@@ -292,6 +291,23 @@ def serialize_group(group: SecurityGroup) -> dict:
     }
 
 
+def serialize_group_membership(group: SecurityGroup) -> dict:
+    """Serialize lightweight group metadata for membership listings."""
+    return {
+        "id": group.id,
+        "name": group.name,
+        "module": group.module,
+        "status": group.status,
+        "source_system": group.source_system,
+        "odoo_id": group.odoo_id,
+        "is_documented": group.is_documented,
+        "follows_naming_convention": group.follows_naming_convention,
+        "has_required_fields": group.has_required_fields,
+        "is_overdue_audit": group.is_overdue_audit,
+        "last_audit_date": group.last_audit_date.isoformat() if group.last_audit_date else None,
+    }
+
+
 def create_csv_response(rows: List[List[str]], headers: List[str], filename: str) -> StreamingResponse:
     """Helper to stream CSV downloads."""
     output = io.StringIO()
@@ -302,254 +318,6 @@ def create_csv_response(rows: List[List[str]], headers: List[str], filename: str
     response = StreamingResponse(iter([output.getvalue()]), media_type="text/csv")
     response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
-
-
-@app.post("/api/import")
-async def import_csv(
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db)
-):
-    """
-    Import CSV file and process security groups.
-    """
-    try:
-        # Save uploaded file temporarily
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as tmp_file:
-            content = await file.read()
-            tmp_file.write(content)
-            tmp_file_path = tmp_file.name
-        
-        # Parse CSV
-        parser = CSVParser(standards_config_path=STANDARDS_CONFIG)
-        groups_data = parser.parse_csv(tmp_file_path)
-        
-        # Validate data
-        validation = parser.validate_data(groups_data)
-        
-        # Create import history record
-        import_history = ImportHistory(
-            import_date=datetime.now(timezone.utc),
-            filename=file.filename,
-            total_groups=len(groups_data),
-            total_users=len(set(user for group in groups_data for user in group.get('users', []))),
-            status="Success" if not validation['errors'] else "Partial",
-            error_count=len(validation['errors']),
-            notes=f"Imported {len(groups_data)} groups"
-        )
-        db.add(import_history)
-        db.flush()
-        # Store import_history_id to restore after rollback if needed
-        import_history_id = import_history.id
-        
-        # Process and store groups
-        groups_created = 0
-        groups_updated = 0
-        users_created = 0
-        
-        for group_data in groups_data:
-            # Use get_or_create pattern with proper error handling
-            group_name = group_data['name']
-            
-            # Try to get existing group
-            existing_group = db.query(SecurityGroup).filter(
-                SecurityGroup.name == group_name
-            ).first()
-            
-            if existing_group:
-                # Update existing group with all fields from import
-                group = existing_group
-                update_fields = False
-                if group_data.get('module') is not None:
-                    group.module = group_data.get('module')
-                    update_fields = True
-                if group_data.get('access_level') is not None:
-                    group.access_level = group_data.get('access_level')
-                    update_fields = True
-                if group_data.get('hierarchy_level') is not None:
-                    group.hierarchy_level = group_data.get('hierarchy_level')
-                    update_fields = True
-                if group_data.get('purpose') is not None:
-                    group.purpose = group_data.get('purpose')
-                    update_fields = True
-                if group_data.get('purpose_html') is not None:
-                    group.purpose_html = group_data.get('purpose_html')
-                    update_fields = True
-                if group_data.get('status') is not None:
-                    group.status = group_data.get('status')
-                    update_fields = True
-                if group_data.get('user_access') is not None:
-                    group.user_access = group_data.get('user_access')
-                    update_fields = True
-                if group_data.get('user_access_html') is not None:
-                    group.user_access_html = group_data.get('user_access_html')
-                    update_fields = True
-                if group_data.get('follows_naming_convention') is not None:
-                    group.follows_naming_convention = group_data.get('follows_naming_convention', False)
-                    update_fields = True
-                if group_data.get('allowed_functions') is not None:
-                    group.allowed_functions = group_data.get('allowed_functions')
-                    update_fields = True
-                if group_data.get('allowed_records') is not None:
-                    group.allowed_records = group_data.get('allowed_records')
-                    update_fields = True
-                if group_data.get('allowed_fields') is not None:
-                    group.allowed_fields = group_data.get('allowed_fields')
-                    update_fields = True
-                if group_data.get('inheritance_notes') is not None:
-                    group.inheritance_notes = group_data.get('inheritance_notes')
-                    update_fields = True
-                if group_data.get('odoo_created_by') is not None:
-                    group.odoo_created_by = group_data.get('odoo_created_by')
-                    update_fields = True
-                if group_data.get('odoo_created_at') is not None:
-                    group.odoo_created_at = group_data.get('odoo_created_at')
-                    update_fields = True
-                if group_data.get('odoo_updated_by') is not None:
-                    group.odoo_updated_by = group_data.get('odoo_updated_by')
-                    update_fields = True
-                if group_data.get('odoo_updated_at') is not None:
-                    group.odoo_updated_at = group_data.get('odoo_updated_at')
-                    update_fields = True
-                group.import_history_id = import_history.id
-                if update_fields:
-                    groups_updated += 1
-            else:
-                # Create new group - use try/except to handle race conditions
-                group = None
-                try:
-                    group = SecurityGroup(
-                        name=group_name,
-                        module=group_data.get('module'),
-                        access_level=group_data.get('access_level'),
-                        hierarchy_level=group_data.get('hierarchy_level'),
-                        purpose=group_data.get('purpose'),
-                        purpose_html=group_data.get('purpose_html'),
-                        status=group_data.get('status'),
-                        user_access=group_data.get('user_access'),
-                        user_access_html=group_data.get('user_access_html'),
-                        follows_naming_convention=group_data.get('follows_naming_convention', False),
-                        allowed_functions=group_data.get('allowed_functions'),
-                        allowed_records=group_data.get('allowed_records'),
-                        allowed_fields=group_data.get('allowed_fields'),
-                        inheritance_notes=group_data.get('inheritance_notes'),
-                        odoo_created_by=group_data.get('odoo_created_by'),
-                        odoo_created_at=group_data.get('odoo_created_at'),
-                        odoo_updated_by=group_data.get('odoo_updated_by'),
-                        odoo_updated_at=group_data.get('odoo_updated_at'),
-                        import_history_id=import_history.id
-                    )
-                    db.add(group)
-                    db.flush()  # Flush to trigger any IntegrityError immediately
-                    groups_created += 1
-                except IntegrityError:
-                    # Group was created between check and insert - rollback and update instead
-                    db.rollback()
-                    # Re-add import_history to session
-                    db.add(import_history)
-                    db.flush()
-                    import_history_id = import_history.id
-                    # Query again for the existing group (it should exist now)
-                    existing_group = db.query(SecurityGroup).filter(
-                        SecurityGroup.name == group_name
-                    ).first()
-                    if existing_group:
-                        # Update existing group
-                        group = existing_group
-                        if group_data.get('module') is not None:
-                            group.module = group_data.get('module')
-                        if group_data.get('access_level') is not None:
-                            group.access_level = group_data.get('access_level')
-                        if group_data.get('hierarchy_level') is not None:
-                            group.hierarchy_level = group_data.get('hierarchy_level')
-                        if group_data.get('purpose') is not None:
-                            group.purpose = group_data.get('purpose')
-                        if group_data.get('purpose_html') is not None:
-                            group.purpose_html = group_data.get('purpose_html')
-                        if group_data.get('status') is not None:
-                            group.status = group_data.get('status')
-                        if group_data.get('user_access') is not None:
-                            group.user_access = group_data.get('user_access')
-                        if group_data.get('user_access_html') is not None:
-                            group.user_access_html = group_data.get('user_access_html')
-                        if group_data.get('follows_naming_convention') is not None:
-                            group.follows_naming_convention = group_data.get('follows_naming_convention', False)
-                        if group_data.get('allowed_functions') is not None:
-                            group.allowed_functions = group_data.get('allowed_functions')
-                        if group_data.get('allowed_records') is not None:
-                            group.allowed_records = group_data.get('allowed_records')
-                        if group_data.get('allowed_fields') is not None:
-                            group.allowed_fields = group_data.get('allowed_fields')
-                        if group_data.get('inheritance_notes') is not None:
-                            group.inheritance_notes = group_data.get('inheritance_notes')
-                        if group_data.get('odoo_created_by') is not None:
-                            group.odoo_created_by = group_data.get('odoo_created_by')
-                        if group_data.get('odoo_created_at') is not None:
-                            group.odoo_created_at = group_data.get('odoo_created_at')
-                        if group_data.get('odoo_updated_by') is not None:
-                            group.odoo_updated_by = group_data.get('odoo_updated_by')
-                        if group_data.get('odoo_updated_at') is not None:
-                            group.odoo_updated_at = group_data.get('odoo_updated_at')
-                        group.import_history_id = import_history.id
-                        groups_updated += 1
-                    else:
-                        # This shouldn't happen, but re-raise if it does
-                        raise HTTPException(
-                            status_code=500,
-                            detail=f"Group '{group_name}' should exist but was not found after rollback. This indicates a database consistency issue."
-                        )
-            
-            # Ensure we have a group object before processing users
-            if not group:
-                continue
-            
-            # Process users
-            for user_name in group_data.get('users', []):
-                if not user_name:
-                    continue
-                
-                # Get or create user
-                user = db.query(User).filter(User.name == user_name).first()
-                if not user:
-                    user = User(name=user_name)
-                    db.add(user)
-                    users_created += 1
-                    db.flush()
-                
-                # Associate user with group if not already associated
-                if user not in group.users:
-                    group.users.append(user)
-            
-            # Process inheritance (simplified - would need more parsing)
-            if group_data.get('inherits'):
-                # This would need more sophisticated parsing
-                pass
-
-            refresh_group_compliance_flags(group)
-        
-        db.commit()
-        
-        # Clean up temp file
-        os.unlink(tmp_file_path)
-        
-        return {
-            "success": True,
-            "import_id": import_history.id,
-            "groups_imported": len(groups_data),
-            "groups_created": groups_created,
-            "groups_updated": groups_updated,
-            "users_created": users_created,
-            "validation": validation
-        }
-    
-    except Exception as e:
-        # Clean up temp file if it exists
-        if 'tmp_file_path' in locals():
-            try:
-                os.unlink(tmp_file_path)
-            except:
-                pass
-        
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/groups")
@@ -722,13 +490,16 @@ async def get_users(
     limit: int = Query(100, ge=1, le=1000),
     search: Optional[str] = None,
     include_hidden: bool = Query(False, description="Include hidden users"),
+    hidden_only: bool = Query(False, description="Return only hidden users"),
     db: Session = Depends(get_db)
 ):
     """Get list of users with their group assignments."""
     query = db.query(User)
 
-    # By default, exclude hidden users
-    if not include_hidden:
+    # Hidden filtering
+    if hidden_only:
+        query = query.filter(User.is_hidden == True)
+    elif not include_hidden:
         query = query.filter(User.is_hidden == False)
 
     if search:
@@ -755,10 +526,65 @@ async def get_users(
                 "created_at": u.created_at.isoformat() if u.created_at else None,
                 "updated_at": u.updated_at.isoformat() if u.updated_at else None,
                 "group_count": len(u.groups),
-                "groups": [{"id": g.id, "name": g.name} for g in u.groups]
+                "groups": [serialize_group_membership(g) for g in u.groups]
             }
             for u in users
         ]
+    }
+
+
+@app.get("/api/departments")
+async def get_departments(db: Session = Depends(get_db)):
+    """Get list of unique departments."""
+    departments = (
+        db.query(User.department)
+        .filter(User.department.isnot(None), User.department != "")
+        .distinct()
+        .order_by(User.department)
+        .all()
+    )
+    return {"departments": [d[0] for d in departments]}
+
+
+@app.get("/api/users/by-department")
+async def get_users_by_department(
+    department: str = Query(..., min_length=1),
+    include_hidden: bool = Query(False, description="Include hidden users"),
+    hidden_only: bool = Query(False, description="Return only hidden users"),
+    db: Session = Depends(get_db),
+):
+    """Get users filtered by department with their group assignments."""
+    query = db.query(User).filter(User.department == department)
+
+    # By default, exclude hidden users unless explicitly requested
+    if hidden_only:
+        query = query.filter(User.is_hidden == True)  # noqa: E712
+    elif not include_hidden:
+        query = query.filter(User.is_hidden == False)  # noqa: E712
+
+    users = (
+        query
+        .options(joinedload(User.groups))
+        .order_by(User.name)
+        .all()
+    )
+
+    return {
+        "department": department,
+        "users": [
+            {
+                "id": u.id,
+                "name": u.name,
+                "email": u.email,
+                "azure_id": u.azure_id,
+                "odoo_user_id": u.odoo_user_id,
+                "is_hidden": u.is_hidden,
+                "group_count": len(u.groups),
+                "groups": [serialize_group_membership(g) for g in u.groups],
+            }
+            for u in users
+        ],
+        "total_users": len(users),
     }
 
 
@@ -782,7 +608,7 @@ async def get_user(user_id: int, db: Session = Depends(get_db)):
         "created_at": user.created_at.isoformat() if user.created_at else None,
         "updated_at": user.updated_at.isoformat() if user.updated_at else None,
         "group_count": len(user.groups),
-        "groups": [{"id": g.id, "name": g.name} for g in user.groups]
+        "groups": [serialize_group_membership(g) for g in user.groups]
     }
 
 
@@ -810,6 +636,8 @@ async def hide_users(
         if not user.is_hidden:
             user.is_hidden = True
             hidden_count += 1
+        # Always register so that future refreshes remember the preference
+        hidden_user_registry.register_hidden_user(user)
 
     db.commit()
 
@@ -839,6 +667,7 @@ async def unhide_users(
         if user.is_hidden:
             user.is_hidden = False
             unhidden_count += 1
+        hidden_user_registry.remove_hidden_user(user)
 
     db.commit()
 
@@ -1940,59 +1769,4 @@ async def get_group_permissions(
         "summary": summary,
     }
 
-
-# =============================================
-# DEPARTMENT FILTERING
-# =============================================
-
-@app.get("/api/departments")
-async def get_departments(db: Session = Depends(get_db)):
-    """Get list of unique departments."""
-    departments = (
-        db.query(User.department)
-        .filter(User.department.isnot(None), User.department != "")
-        .distinct()
-        .order_by(User.department)
-        .all()
-    )
-    return {"departments": [d[0] for d in departments]}
-
-
-@app.get("/api/users/by-department")
-async def get_users_by_department(
-    department: str = Query(..., min_length=1),
-    include_hidden: bool = Query(False, description="Include hidden users"),
-    db: Session = Depends(get_db),
-):
-    """Get users filtered by department with their group assignments."""
-    query = db.query(User).filter(User.department == department)
-
-    # By default, exclude hidden users
-    if not include_hidden:
-        query = query.filter(User.is_hidden == False)
-
-    users = (
-        query
-        .options(joinedload(User.groups))
-        .order_by(User.name)
-        .all()
-    )
-
-    return {
-        "department": department,
-        "users": [
-            {
-                "id": u.id,
-                "name": u.name,
-                "email": u.email,
-                "azure_id": u.azure_id,
-                "odoo_user_id": u.odoo_user_id,
-                "is_hidden": u.is_hidden,
-                "group_count": len(u.groups),
-                "groups": [{"id": g.id, "name": g.name, "module": g.module} for g in u.groups],
-            }
-            for u in users
-        ],
-        "total_users": len(users),
-    }
 

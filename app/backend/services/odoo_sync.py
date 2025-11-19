@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone, date
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import psycopg
@@ -12,10 +14,92 @@ from sqlalchemy.orm import Session
 
 from app.backend.services.sync_runs import create_sync_run, complete_sync_run
 from app.backend.settings import settings
-from app.data.csv_parser import CSVParser
+from app.backend.services.hidden_user_registry import hidden_user_registry
 from app.data.models import SecurityGroup, User, AccessRight, user_group_association
 
-parser = CSVParser()
+_STANDARDS_CACHE: Optional[Dict] = None
+
+def _parse_datetime(value: Optional[object]) -> Optional[datetime]:
+    """Parse ISO formatted timestamps safely."""
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _load_standards() -> Dict:
+    """Load standards configuration once for name parsing."""
+    global _STANDARDS_CACHE
+    if _STANDARDS_CACHE is not None:
+        return _STANDARDS_CACHE
+
+    config_path = Path(__file__).resolve().parents[1] / "config" / "standards.json"
+    try:
+        if config_path.exists():
+            with config_path.open("r", encoding="utf-8") as fh:
+                _STANDARDS_CACHE = json.load(fh)
+        else:
+            _STANDARDS_CACHE = {}
+    except Exception:
+        _STANDARDS_CACHE = {}
+    return _STANDARDS_CACHE
+
+
+def _detect_hierarchy_level(access_level: Optional[str]) -> Optional[int]:
+    """Determine hierarchy level from standards config."""
+    if not access_level:
+        return None
+
+    standards = _load_standards()
+    access_levels = standards.get("access_levels", {})
+    hierarchy = access_levels.get("hierarchy", {})
+    additional = access_levels.get("additional_levels", {})
+
+    for level_data in hierarchy.values():
+        if level_data.get("name") == access_level:
+            return level_data.get("level")
+
+    for level_data in additional.values():
+        if level_data.get("name") == access_level:
+            return level_data.get("level")
+
+    return None
+
+
+def extract_module_and_access_level(name: Optional[str]) -> Tuple[Optional[str], Optional[str], Optional[int]]:
+    """Extract module/access level metadata from a security group name."""
+    if not name:
+        return None, None, None
+
+    standards = _load_standards()
+    naming_config = standards.get("naming_convention", {})
+    pattern = naming_config.get("regex") or r"^Odoo - (.+) / (.+)$"
+    match = re.match(pattern, name)
+    if match:
+        module = match.group(1).strip()
+        access_level = match.group(2).strip()
+        hierarchy_level = _detect_hierarchy_level(access_level)
+        return module, access_level, hierarchy_level
+
+    alt_match = re.match(r"^(.+?) / (.+)$", name)
+    if alt_match:
+        module = alt_match.group(1).strip()
+        access_level = alt_match.group(2).strip()
+        hierarchy_level = _detect_hierarchy_level(access_level)
+        return module, access_level, hierarchy_level
+
+    if " / " in name:
+        module, _, access_level = name.partition(" / ")
+        module = module.strip() or None
+        access_level = access_level.strip() or None
+        hierarchy_level = _detect_hierarchy_level(access_level) if access_level else None
+        return module, access_level, hierarchy_level
+
+    return None, None, None
 
 
 def _normalize_translated_value(value):
@@ -319,7 +403,7 @@ def _upsert_groups(db: Session, payload: Dict) -> Dict[str, int]:
             if isinstance(application_name, str):
                 application_name = application_name.strip() or None
 
-            parsed_module, parsed_access_level, parsed_hierarchy_level = parser.extract_module_and_access_level(name)
+            parsed_module, parsed_access_level, parsed_hierarchy_level = extract_module_and_access_level(name)
             module_value = application_name or parsed_module
             access_level_value = record.get("access_level") or parsed_access_level
             hierarchy_level_value = record.get("hierarchy_level") or parsed_hierarchy_level
@@ -373,14 +457,21 @@ def _upsert_groups(db: Session, payload: Dict) -> Dict[str, int]:
                 group.access_level = access_level_value
             if hierarchy_level_value is not None and group.hierarchy_level is None:
                 group.hierarchy_level = hierarchy_level_value
+            if record.get("purpose") is not None:
+                group.purpose = record.get("purpose")
             group.allowed_functions = record.get("allowed_functions")
             group.allowed_records = record.get("allowed_records")
             group.allowed_fields = record.get("allowed_fields")
+            if record.get("user_access") is not None:
+                group.user_access = record.get("user_access")
             group.inheritance_notes = record.get("inheritance_notes")
             group.odoo_created_by = record.get("odoo_created_by")
-            group.odoo_created_at = record.get("odoo_created_at")
+            group.odoo_created_at = _parse_datetime(record.get("odoo_created_at"))
             group.odoo_updated_by = record.get("odoo_updated_by")
-            group.odoo_updated_at = record.get("odoo_updated_at") or record.get("write_date")
+            group.odoo_updated_at = (
+                _parse_datetime(record.get("odoo_updated_at"))
+                or _parse_datetime(record.get("write_date"))
+            )
             group_lookup[gid] = group
 
         # Process users
@@ -422,6 +513,7 @@ def _upsert_groups(db: Session, payload: Dict) -> Dict[str, int]:
             # Tag with environment (e.g., "Odoo (Pre-Production)" or "Odoo (Production)")
             env_display = settings.odoo_environment_display
             user.source_system = f"Odoo ({env_display})"
+            hidden_user_registry.apply_hidden_flag(user)
             user_lookup[uid] = user
 
         # Membership associations

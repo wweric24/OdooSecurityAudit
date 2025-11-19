@@ -14,6 +14,15 @@ import {
   MenuItem,
   Divider,
   Paper,
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  FormGroup,
+  FormControlLabel,
+  Checkbox,
+  IconButton,
 } from '@mui/material'
 import {
   ResponsiveContainer,
@@ -25,17 +34,42 @@ import {
   Cell,
 } from 'recharts'
 import ArrowForwardIosIcon from '@mui/icons-material/ArrowForwardIos'
+import SettingsIcon from '@mui/icons-material/Settings'
+import CloseIcon from '@mui/icons-material/Close'
 import { api } from '../api/client'
 import ConfigurableDataGrid from './common/ConfigurableDataGrid'
 
-const RISK_CARD_IDS = [
-  'highRiskUsers',
-  'highImpactGroups',
-  'riskHighlights',
-  'relationshipExplorer',
+const END_DROP_ZONE_ID = '__dashboard-card-dropzone__'
+const CARD_ORDER_STORAGE_KEY = 'dashboard-card-order'
+const HIDDEN_CARD_STORAGE_KEY = 'dashboard-hidden-cards'
+
+const CARD_DEFINITIONS = [
+  { id: 'totalGroups', label: 'Total Groups', gridProps: { xs: 12, sm: 6, md: 4, lg: 3 } },
+  { id: 'totalUsers', label: 'Total Users', gridProps: { xs: 12, sm: 6, md: 4, lg: 3 } },
+  { id: 'roleAssignments', label: 'Role Assignments', gridProps: { xs: 12, sm: 6, md: 4, lg: 3 } },
+  { id: 'compliance', label: 'Compliance', gridProps: { xs: 12, sm: 6, md: 4, lg: 3 } },
+  {
+    id: 'undocumentedExposure',
+    label: 'Undocumented Exposure',
+    gridProps: { xs: 12, sm: 6, md: 4, lg: 3 },
+  },
+  { id: 'documentationStatus', label: 'Documentation Status', gridProps: { xs: 12, md: 4 } },
+  { id: 'statusBreakdown', label: 'Status Breakdown', gridProps: { xs: 12, md: 4 } },
+  { id: 'assignmentDensity', label: 'Assignment Density', gridProps: { xs: 12, md: 4 } },
+  { id: 'moduleDistribution', label: 'Module Distribution', gridProps: { xs: 12, lg: 7 } },
+  { id: 'securityMatrix', label: 'Security Matrix Snapshot', gridProps: { xs: 12, lg: 5 } },
+  { id: 'highRiskUsers', label: 'High-Risk Users', gridProps: { xs: 12 } },
+  { id: 'highImpactGroups', label: 'High-Impact Groups', gridProps: { xs: 12 } },
+  { id: 'riskHighlights', label: 'Risk & Inheritance Highlights', gridProps: { xs: 12 } },
+  { id: 'relationshipExplorer', label: 'Group Relationship Explorer', gridProps: { xs: 12 } },
 ]
-const RISK_CARD_ORDER_STORAGE_KEY = 'dashboard-risk-card-order'
-const END_DROP_ZONE_ID = '__risk-card-dropzone__'
+
+const CARD_DEFINITION_MAP = CARD_DEFINITIONS.reduce((acc, card) => {
+  acc[card.id] = card
+  return acc
+}, {})
+
+const DEFAULT_CARD_ORDER = CARD_DEFINITIONS.map((card) => card.id)
 
 const normalizeCardOrder = (order) => {
   const safeOrder = Array.isArray(order) ? order : []
@@ -43,13 +77,13 @@ const normalizeCardOrder = (order) => {
   const deduped = []
 
   safeOrder.forEach((cardId) => {
-    if (RISK_CARD_IDS.includes(cardId) && !seen.has(cardId)) {
+    if (DEFAULT_CARD_ORDER.includes(cardId) && !seen.has(cardId)) {
       seen.add(cardId)
       deduped.push(cardId)
     }
   })
 
-  RISK_CARD_IDS.forEach((cardId) => {
+  DEFAULT_CARD_ORDER.forEach((cardId) => {
     if (!seen.has(cardId)) {
       seen.add(cardId)
       deduped.push(cardId)
@@ -93,17 +127,34 @@ function Dashboard() {
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [riskCardOrder, setRiskCardOrder] = useState(() => {
+  const [cardOrder, setCardOrder] = useState(() => {
     if (typeof window === 'undefined') {
-      return normalizeCardOrder()
+      return DEFAULT_CARD_ORDER
     }
     try {
-      const stored = window.localStorage.getItem(RISK_CARD_ORDER_STORAGE_KEY)
-      return stored ? normalizeCardOrder(JSON.parse(stored)) : normalizeCardOrder()
+      const stored = window.localStorage.getItem(CARD_ORDER_STORAGE_KEY)
+      return stored ? normalizeCardOrder(JSON.parse(stored)) : DEFAULT_CARD_ORDER
     } catch {
-      return normalizeCardOrder()
+      return DEFAULT_CARD_ORDER
     }
   })
+  const [hiddenCards, setHiddenCards] = useState(() => {
+    if (typeof window === 'undefined') {
+      return []
+    }
+    try {
+      const stored = window.localStorage.getItem(HIDDEN_CARD_STORAGE_KEY)
+      if (!stored) return []
+      const parsed = JSON.parse(stored)
+      return Array.isArray(parsed)
+        ? parsed.filter((id) => DEFAULT_CARD_ORDER.includes(id))
+        : []
+    } catch {
+      return []
+    }
+  })
+  const hiddenCardSet = useMemo(() => new Set(hiddenCards), [hiddenCards])
+  const [cardConfigOpen, setCardConfigOpen] = useState(false)
   const [draggingCard, setDraggingCard] = useState(null)
   const [activeDropTarget, setActiveDropTarget] = useState(null)
 
@@ -126,9 +177,15 @@ function Dashboard() {
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      window.localStorage.setItem(RISK_CARD_ORDER_STORAGE_KEY, JSON.stringify(riskCardOrder))
+      window.localStorage.setItem(CARD_ORDER_STORAGE_KEY, JSON.stringify(cardOrder))
     }
-  }, [riskCardOrder])
+  }, [cardOrder])
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(HIDDEN_CARD_STORAGE_KEY, JSON.stringify(hiddenCards))
+    }
+  }, [hiddenCards])
 
   const renderSignalChips = (signals) => {
     if (!signals || signals.length === 0) {
@@ -429,12 +486,6 @@ function Dashboard() {
     return `rgba(25, 118, 210, ${alpha})`
   }
 
-  const statsGridStyles = {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-    gap: { xs: 2, md: 3 },
-  }
-
   const handleCardDragStart = (event, cardId) => {
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('text/plain', cardId)
@@ -464,12 +515,245 @@ function Dashboard() {
       handleCardDragEnd()
       return
     }
-    setRiskCardOrder((prev) => moveCard(prev, draggedCardId, targetId))
+    setCardOrder((prev) => moveCard(prev, draggedCardId, targetId))
     handleCardDragEnd()
   }
 
-  const renderRiskCard = (cardId) => {
+  const handleRemoveCard = (cardId) => {
+    setHiddenCards((prev) => (prev.includes(cardId) ? prev : [...prev, cardId]))
+  }
+
+  const handleToggleCardVisibility = (cardId, isVisible) => {
+    setHiddenCards((prev) => {
+      if (isVisible) {
+        return prev.filter((id) => id !== cardId)
+      }
+      if (prev.includes(cardId)) {
+        return prev
+      }
+      return [...prev, cardId]
+    })
+  }
+
+  const handleResetCards = () => {
+    setCardOrder(DEFAULT_CARD_ORDER)
+    setHiddenCards([])
+  }
+
+  const visibleCardOrder = useMemo(
+    () => cardOrder.filter((cardId) => !hiddenCardSet.has(cardId)),
+    [cardOrder, hiddenCardSet]
+  )
+
+  const renderCardContent = (cardId) => {
     switch (cardId) {
+      case 'totalGroups':
+        return (
+          <StatCard
+            title="Total Groups"
+            value={stats.total_groups}
+            subtitle={`${stats.documented_groups} documented, ${stats.undocumented_groups} undocumented`}
+          />
+        )
+      case 'totalUsers':
+        return <StatCard title="Total Users" value={stats.total_users} />
+      case 'roleAssignments':
+        return (
+          <StatCard
+            title="Role Assignments"
+            value={stats.total_memberships ?? 0}
+            subtitle={`Avg ${stats.avg_groups_per_user ?? 0} groups per user`}
+          />
+        )
+      case 'compliance':
+        return (
+          <StatCard
+            title="Compliance"
+            value={`${stats.compliance_percentage}%`}
+            subtitle={`${stats.follows_naming_convention} groups follow naming convention`}
+            color={stats.compliance_percentage >= 80 ? 'success' : 'warning'}
+          />
+        )
+      case 'undocumentedExposure':
+        return (
+          <StatCard
+            title="Undocumented Exposure"
+            value={stats.undocumented_memberships ?? 0}
+            subtitle={`${stats.users_with_undocumented_groups ?? 0} users / ${
+              stats.active_undocumented_groups ?? 0
+            } groups`}
+            color="error"
+          />
+        )
+      case 'documentationStatus':
+        return (
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Documentation Status
+              </Typography>
+              <Typography variant="body2" color="textSecondary" sx={{ mb: 1 }}>
+                {stats.documented_groups} documented / {stats.total_groups} total
+              </Typography>
+              <LinearProgress
+                variant="determinate"
+                value={((stats.documented_groups || 0) / (stats.total_groups || 1)) * 100}
+                sx={{ height: 10, borderRadius: 5 }}
+              />
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="body2" color="textSecondary">
+                  Undocumented Groups
+                </Typography>
+                <Typography variant="h6" color="warning.main">
+                  {stats.undocumented_groups}
+                </Typography>
+              </Box>
+            </CardContent>
+          </Card>
+        )
+      case 'statusBreakdown':
+        return (
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Status Breakdown
+              </Typography>
+              <Typography variant="body2" color="textSecondary" sx={{ mb: 1 }}>
+                Manual statuses captured across your synced groups.
+              </Typography>
+              {statusBreakdown.length > 0 ? (
+                <Stack spacing={1}>
+                  {statusBreakdown.map((item) => (
+                    <Box key={item.status} sx={{ width: '100%' }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <Typography variant="body2">{item.status}</Typography>
+                        <Typography variant="body2" fontWeight={600}>
+                          {item.count}
+                        </Typography>
+                      </Box>
+                      <LinearProgress
+                        variant="determinate"
+                        value={(item.count / (stats.total_groups || 1)) * 100}
+                        sx={{ height: 8, borderRadius: 4 }}
+                      />
+                    </Box>
+                  ))}
+                </Stack>
+              ) : (
+                <Typography variant="body2" color="textSecondary">
+                  No status data captured yet.
+                </Typography>
+              )}
+            </CardContent>
+          </Card>
+        )
+      case 'assignmentDensity':
+        return (
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Assignment Density
+              </Typography>
+              <Typography variant="body1" sx={{ fontSize: 32, fontWeight: 600 }}>
+                {stats.avg_groups_per_user ?? 0}
+              </Typography>
+              <Typography variant="body2" color="textSecondary">
+                heavy user threshold&nbsp;
+                <strong>{stats.heavy_user_threshold || 0}</strong> groups
+              </Typography>
+              <Typography variant="body2" color="textSecondary">
+                total memberships:&nbsp;
+                <strong>{(stats.total_memberships || 0).toLocaleString()}</strong>
+              </Typography>
+            </CardContent>
+          </Card>
+        )
+      case 'moduleDistribution':
+        return (
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Module Distribution
+              </Typography>
+              {moduleSummary.length > 0 ? (
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart data={moduleSummary} margin={{ top: 10, right: 10, left: 0, bottom: 40 }}>
+                    <XAxis dataKey="module" angle={-20} textAnchor="end" interval={0} height={60} />
+                    <YAxis allowDecimals={false} />
+                    <Tooltip />
+                    <Bar dataKey="user_count" radius={[4, 4, 0, 0]}>
+                      {moduleSummary.map((entry, index) => (
+                        <Cell
+                          key={`cell-${entry.module}-${index}`}
+                          fill={chartColors[index % chartColors.length]}
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <Typography variant="body2" color="textSecondary">
+                  Module-level statistics are unavailable until more assignments are synced.
+                </Typography>
+              )}
+            </CardContent>
+          </Card>
+        )
+      case 'securityMatrix':
+        return (
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Security Matrix Snapshot
+              </Typography>
+              <Typography variant="body2" color="textSecondary" sx={{ mb: 1 }}>
+                Quick view of the busiest department  group combos.
+              </Typography>
+              {topMatrixDepartments.length > 0 ? (
+                <Stack spacing={2}>
+                  {topMatrixDepartments.map(([dept, combos]) => {
+                    const sortedCombos = [...combos].sort(
+                      (a, b) => (b.user_count || 0) - (a.user_count || 0)
+                    )
+                    return (
+                      <Box key={dept}>
+                        <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+                          {dept}
+                        </Typography>
+                        <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
+                          {sortedCombos.slice(0, 4).map((combo) => (
+                            <Box
+                              key={`${dept}-${combo.group}`}
+                              sx={{
+                                px: 1.5,
+                                py: 1,
+                                borderRadius: 1.5,
+                                backgroundColor: getHeatColor(combo.user_count),
+                                color: '#fff',
+                                minWidth: 140,
+                              }}
+                            >
+                              <Typography variant="caption" sx={{ display: 'block' }}>
+                                {combo.group}
+                              </Typography>
+                              <Typography variant="body2" fontWeight={600}>
+                                {combo.user_count} users
+                              </Typography>
+                            </Box>
+                          ))}
+                        </Stack>
+                      </Box>
+                    )
+                  })}
+                </Stack>
+              ) : (
+                <Typography variant="body2" color="textSecondary">
+                  No department/group data available yet.
+                </Typography>
+              )}
+            </CardContent>
+          </Card>
+        )
       case 'highRiskUsers':
         return (
           <Card>
@@ -577,211 +861,41 @@ function Dashboard() {
 
   return (
     <Box>
-      <Typography variant="h4" gutterBottom>
-        Dashboard
-      </Typography>
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={1.5}
+        justifyContent="space-between"
+        alignItems={{ xs: 'flex-start', sm: 'center' }}
+        sx={{ mb: 2 }}
+      >
+        <Typography variant="h4">Dashboard</Typography>
+        <Button
+          variant="contained"
+          size="small"
+          startIcon={<SettingsIcon />}
+          onClick={() => setCardConfigOpen(true)}
+        >
+          Configure Cards
+        </Button>
+      </Stack>
 
       <Box sx={panelStyle}>
-        <Stack spacing={{ xs: 3, md: 4 }}>
-          <Box sx={statsGridStyles}>
-            <StatCard
-              title="Total Groups"
-              value={stats.total_groups}
-              subtitle={`${stats.documented_groups} documented, ${stats.undocumented_groups} undocumented`}
-            />
-            <StatCard title="Total Users" value={stats.total_users} />
-            <StatCard
-              title="Role Assignments"
-              value={stats.total_memberships ?? 0}
-              subtitle={`Avg ${stats.avg_groups_per_user ?? 0} groups per user`}
-            />
-            <StatCard
-              title="Compliance"
-              value={`${stats.compliance_percentage}%`}
-              subtitle={`${stats.follows_naming_convention} groups follow naming convention`}
-              color={stats.compliance_percentage >= 80 ? 'success' : 'warning'}
-            />
-            <StatCard
-              title="Undocumented Exposure"
-              value={stats.undocumented_memberships ?? 0}
-              subtitle={`${stats.users_with_undocumented_groups ?? 0} users / ${stats.active_undocumented_groups ?? 0} groups`}
-              color="error"
-            />
-          </Box>
-
-          <Grid container spacing={{ xs: 2, md: 3, xl: 4 }}>
-            <Grid item xs={12} md={4}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Documentation Status
-                  </Typography>
-                  <Typography variant="body2" color="textSecondary" sx={{ mb: 1 }}>
-                    {stats.documented_groups} documented / {stats.total_groups} total
-                  </Typography>
-                  <LinearProgress
-                    variant="determinate"
-                    value={((stats.documented_groups || 0) / (stats.total_groups || 1)) * 100}
-                    sx={{ height: 10, borderRadius: 5 }}
-                  />
-                  <Box sx={{ mt: 2 }}>
-                    <Typography variant="body2" color="textSecondary">
-                      Undocumented Groups
-                    </Typography>
-                    <Typography variant="h6" color="warning.main">
-                      {stats.undocumented_groups}
-                    </Typography>
-                  </Box>
-                </CardContent>
-              </Card>
+        <Grid container spacing={{ xs: 2, md: 3, xl: 4 }}>
+          {visibleCardOrder.length === 0 ? (
+            <Grid item xs={12}>
+              <Alert severity="info">
+                All cards are hidden. Use "Configure Cards" to re-enable sections.
+              </Alert>
             </Grid>
-
-            <Grid item xs={12} md={4}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Status Breakdown
-                  </Typography>
-                  <Typography variant="body2" color="textSecondary" sx={{ mb: 1 }}>
-                    Manual statuses captured across your synced groups.
-                  </Typography>
-                  {statusBreakdown.length > 0 ? (
-                    <Stack spacing={1}>
-                      {statusBreakdown.map((item) => (
-                        <Box key={item.status} sx={{ width: '100%' }}>
-                          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <Typography variant="body2">{item.status}</Typography>
-                            <Typography variant="body2" fontWeight={600}>
-                              {item.count}
-                            </Typography>
-                          </Box>
-                          <LinearProgress
-                            variant="determinate"
-                            value={(item.count / (stats.total_groups || 1)) * 100}
-                            sx={{ height: 8, borderRadius: 4 }}
-                          />
-                        </Box>
-                      ))}
-                    </Stack>
-                  ) : (
-                    <Typography variant="body2" color="textSecondary">
-                      No status data captured yet.
-                    </Typography>
-                  )}
-                </CardContent>
-              </Card>
-            </Grid>
-
-            <Grid item xs={12} md={4}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Assignment Density
-                  </Typography>
-                  <Typography variant="body1" sx={{ fontSize: 32, fontWeight: 600 }}>
-                    {stats.avg_groups_per_user ?? 0}
-                  </Typography>
-                  <Typography variant="body2" color="textSecondary">
-                    heavy user threshold&nbsp;
-                    <strong>{stats.heavy_user_threshold || 0}</strong> groups
-                  </Typography>
-                  <Typography variant="body2" color="textSecondary">
-                    total memberships:&nbsp;
-                    <strong>{(stats.total_memberships || 0).toLocaleString()}</strong>
-                  </Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-
-            <Grid item xs={12} lg={7}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Module Distribution
-                  </Typography>
-                  {moduleSummary.length > 0 ? (
-                    <ResponsiveContainer width="100%" height={280}>
-                      <BarChart data={moduleSummary} margin={{ top: 10, right: 10, left: 0, bottom: 40 }}>
-                        <XAxis dataKey="module" angle={-20} textAnchor="end" interval={0} height={60} />
-                        <YAxis allowDecimals={false} />
-                        <Tooltip />
-                        <Bar dataKey="user_count" radius={[4, 4, 0, 0]}>
-                          {moduleSummary.map((entry, index) => (
-                            <Cell key={`cell-${entry.module}-${index}`} fill={chartColors[index % chartColors.length]} />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <Typography variant="body2" color="textSecondary">
-                      Module-level statistics are unavailable until more assignments are synced.
-                    </Typography>
-                  )}
-                </CardContent>
-              </Card>
-            </Grid>
-
-            <Grid item xs={12} lg={5}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Security Matrix Snapshot
-                  </Typography>
-                  <Typography variant="body2" color="textSecondary" sx={{ mb: 1 }}>
-                    Quick view of the busiest department ↔ group combos.
-                  </Typography>
-                  {topMatrixDepartments.length > 0 ? (
-                    <Stack spacing={2}>
-                      {topMatrixDepartments.map(([dept, combos]) => {
-                        const sortedCombos = [...combos].sort(
-                          (a, b) => (b.user_count || 0) - (a.user_count || 0)
-                        )
-                        return (
-                          <Box key={dept}>
-                            <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
-                              {dept}
-                            </Typography>
-                            <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
-                              {sortedCombos.slice(0, 4).map((combo) => (
-                                <Box
-                                  key={`${dept}-${combo.group}`}
-                                  sx={{
-                                    px: 1.5,
-                                    py: 1,
-                                    borderRadius: 1.5,
-                                    backgroundColor: getHeatColor(combo.user_count),
-                                    color: '#fff',
-                                    minWidth: 140,
-                                  }}
-                                >
-                                  <Typography variant="caption" sx={{ display: 'block' }}>
-                                    {combo.group}
-                                  </Typography>
-                                  <Typography variant="body2" fontWeight={600}>
-                                    {combo.user_count} users
-                                  </Typography>
-                                </Box>
-                              ))}
-                            </Stack>
-                          </Box>
-                        )
-                      })}
-                    </Stack>
-                  ) : (
-                    <Typography variant="body2" color="textSecondary">
-                      No department/group data available yet.
-                    </Typography>
-                  )}
-                </CardContent>
-              </Card>
-            </Grid>
-
-            {riskCardOrder.map((cardId) => {
-              const cardContent = renderRiskCard(cardId)
+          ) : (
+            visibleCardOrder.map((cardId) => {
+              const cardContent = renderCardContent(cardId)
               if (!cardContent) return null
+              const definition = CARD_DEFINITION_MAP[cardId]
+              const gridProps = definition?.gridProps || { xs: 12 }
               const isActiveTarget = activeDropTarget === cardId
               return (
-                <Grid item xs={12} key={cardId}>
+                <Grid item key={cardId} {...gridProps}>
                   <Box
                     draggable
                     onDragStart={(event) => handleCardDragStart(event, cardId)}
@@ -795,47 +909,105 @@ function Dashboard() {
                       borderRadius: 2,
                       cursor: draggingCard === cardId ? 'grabbing' : 'grab',
                       userSelect: 'none',
-                      transition: 'border-color 0.15s ease, transform 0.15s ease',
+                      transition: 'border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease',
                       transform: isActiveTarget ? 'scale(0.995)' : 'none',
+                      position: 'relative',
+                      '&:hover .card-dismiss': {
+                        opacity: 1,
+                      },
                     }}
                   >
+                    <IconButton
+                      size="small"
+                      className="card-dismiss"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        event.preventDefault()
+                        handleRemoveCard(cardId)
+                      }}
+                      onMouseDown={(event) => event.stopPropagation()}
+                      sx={{
+                        position: 'absolute',
+                        top: 8,
+                        right: 8,
+                        bgcolor: 'rgba(15,23,42,0.65)',
+                        color: '#fff',
+                        opacity: 0,
+                        transition: 'opacity 0.15s ease',
+                        '&:hover': {
+                          bgcolor: 'rgba(220, 38, 38, 0.85)',
+                        },
+                      }}
+                    >
+                      <CloseIcon fontSize="small" />
+                    </IconButton>
                     {cardContent}
                   </Box>
                 </Grid>
               )
-            })}
-            {draggingCard && (
-              <Grid item xs={12} key={END_DROP_ZONE_ID}>
-                <Box
-                  onDragOver={(event) => handleCardDragOver(event, END_DROP_ZONE_ID)}
-                  onDragLeave={() => handleCardDragLeave(END_DROP_ZONE_ID)}
-                  onDrop={(event) => handleCardDrop(event, END_DROP_ZONE_ID)}
-                  sx={{
-                    border: '1px dashed',
-                    borderColor:
-                      activeDropTarget === END_DROP_ZONE_ID ? 'primary.light' : 'transparent',
-                    borderRadius: 2,
-                    minHeight: 36,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: 'text.secondary',
-                    fontSize: 13,
-                    fontStyle: 'italic',
-                    backgroundColor:
-                      activeDropTarget === END_DROP_ZONE_ID
-                        ? 'rgba(25, 118, 210, 0.04)'
-                        : 'transparent',
-                    transition: 'border-color 0.15s ease, background-color 0.15s ease',
-                  }}
-                >
-                  Drop here to send card to the bottom
-                </Box>
-              </Grid>
-            )}
-          </Grid>
-        </Stack>
+            })
+          )}
+          {draggingCard && (
+            <Grid item xs={12} key={END_DROP_ZONE_ID}>
+              <Box
+                onDragOver={(event) => handleCardDragOver(event, END_DROP_ZONE_ID)}
+                onDragLeave={() => handleCardDragLeave(END_DROP_ZONE_ID)}
+                onDrop={(event) => handleCardDrop(event, END_DROP_ZONE_ID)}
+                sx={{
+                  border: '1px dashed',
+                  borderColor:
+                    activeDropTarget === END_DROP_ZONE_ID ? 'primary.light' : 'transparent',
+                  borderRadius: 2,
+                  minHeight: 36,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'text.secondary',
+                  fontSize: 13,
+                  fontStyle: 'italic',
+                  backgroundColor:
+                    activeDropTarget === END_DROP_ZONE_ID
+                      ? 'rgba(25, 118, 210, 0.04)'
+                      : 'transparent',
+                  transition: 'border-color 0.15s ease, background-color 0.15s ease',
+                }}
+              >
+                Drop here to send card to the bottom
+              </Box>
+            </Grid>
+          )}
+        </Grid>
       </Box>
+
+      <Dialog open={cardConfigOpen} onClose={() => setCardConfigOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Configure Dashboard Cards</DialogTitle>
+        <DialogContent dividers>
+          <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+            Drag cards on the main dashboard to reorder them. Use the toggles below to show or hide
+            specific cards.
+          </Typography>
+          <FormGroup>
+            {CARD_DEFINITIONS.map((card) => (
+              <FormControlLabel
+                key={card.id}
+                control={
+                  <Checkbox
+                    checked={!hiddenCardSet.has(card.id)}
+                    onChange={(event) => handleToggleCardVisibility(card.id, event.target.checked)}
+                  />
+                }
+                label={card.label}
+              />
+            ))}
+          </FormGroup>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleResetCards}>Reset Layout</Button>
+          <Button variant="contained" onClick={() => setCardConfigOpen(false)}>
+            Done
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }

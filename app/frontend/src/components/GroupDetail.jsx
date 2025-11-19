@@ -40,11 +40,14 @@ import { api } from '../api/client'
 const panelStyle = {
   backgroundColor: '#fff',
   borderRadius: 3,
-  p: { xs: 2, md: 3 },
+  p: { xs: 2.5, md: 3.5, xl: 4 },
   boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)',
+  width: '100%',
+  maxWidth: '1600px',
+  mx: 'auto',
 }
 
-const STATUS_OPTIONS = ['Under Review', 'Confirmed', 'Active', 'Deprecated', 'Legacy']
+const STATUS_OPTIONS = ['Active', 'Confirmed', 'Deprecated', 'Legacy']
 const EMPTY_PERMISSIONS = {
   direct_permissions: [],
   inherited_permissions: [],
@@ -72,6 +75,12 @@ function GroupDetail() {
   const [loadingPermissions, setLoadingPermissions] = useState(false)
   const [validationErrors, setValidationErrors] = useState({})
 
+  const formatDateTime = (value) => {
+    if (!value) return 'Not captured'
+    const parsed = new Date(value)
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString()
+  }
+
   useEffect(() => {
     loadGroup()
   }, [id])
@@ -88,7 +97,7 @@ function GroupDetail() {
       const response = await api.getGroup(id)
       setGroup(response.data)
       setFormData({
-        status: response.data.status || 'Under Review',
+        status: response.data.status || 'Active',
         who_requires: response.data.who_requires || '',
         why_required: response.data.why_required || '',
         notes: response.data.notes || '',
@@ -170,7 +179,7 @@ function GroupDetail() {
   const handleReset = () => {
     if (!group) return
     setFormData({
-      status: group.status || 'Under Review',
+      status: group.status || 'Active',
       who_requires: group.who_requires || '',
       why_required: group.why_required || '',
       notes: group.notes || '',
@@ -180,9 +189,6 @@ function GroupDetail() {
     setSuccessMessage(null)
     setValidationErrors({})
   }
-
-  const effectivePermissions = permissions.effective_permissions || []
-  const permissionSummary = permissions.summary || {}
 
   if (loading) {
     return (
@@ -199,6 +205,23 @@ function GroupDetail() {
   if (!group) {
     return <Alert severity="info">Group not found</Alert>
   }
+
+  const effectivePermissions = permissions.effective_permissions || []
+  const permissionSummary = permissions.summary || {}
+  const metadataChecklist = [
+    { label: 'Created By', value: group.odoo_created_by },
+    { label: 'Created On', value: group.odoo_created_at ? formatDateTime(group.odoo_created_at) : null },
+    { label: 'Last Updated By', value: group.odoo_updated_by },
+    { label: 'Last Updated On', value: group.odoo_updated_at ? formatDateTime(group.odoo_updated_at) : null },
+  ]
+  const documentationTextSections = [
+    { label: 'Group Purpose', value: group.purpose },
+    { label: 'Allowed Functions', value: group.allowed_functions },
+    { label: 'Allowed Records', value: group.allowed_records },
+    { label: 'Allowed Fields', value: group.allowed_fields },
+    { label: 'User Access', value: group.user_access },
+    { label: 'Transitivity / Inherited Notes', value: group.inheritance_notes || (group.parent_groups?.length ? 'Parent groups listed below' : '') },
+  ]
 
   return (
     <Box>
@@ -257,13 +280,15 @@ function GroupDetail() {
                   Status
                 </Typography>
                 <Chip
-                    label={group.status}
-                    size="small"
-                    color={
-                      group.status === 'Confirmed'
+                  label={group.status || 'Not specified'}
+                  size="small"
+                  color={
+                    group.status === 'Confirmed'
                       ? 'success'
-                      : group.status === 'Under Review'
-                      ? 'warning'
+                      : group.status === 'Active'
+                      ? 'info'
+                      : group.status === 'Deprecated' || group.status === 'Legacy'
+                      ? 'default'
                       : 'default'
                   }
                 />
@@ -303,12 +328,12 @@ function GroupDetail() {
 
               <Box sx={{ mb: 2 }}>
                 <Typography variant="body2" color="textSecondary">
-                  Required Fields
+                  Odoo Doc Fields
                 </Typography>
                 {group.has_required_fields ? (
                   <Chip label="Complete" size="small" color="success" />
                 ) : (
-                  <Chip label="Incomplete" size="small" color="warning" />
+                  <Chip label="Missing" size="small" color="warning" />
                 )}
               </Box>
 
@@ -334,6 +359,75 @@ function GroupDetail() {
                   )}
                 </Typography>
               </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        <Grid item xs={12}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Odoo Documentation Fields
+              </Typography>
+              <Typography variant="body2" color="textSecondary" sx={{ mb: 2 }}>
+                These metadata and documentation fields determine whether the group is considered
+                documented.
+              </Typography>
+              <Stack
+                direction={{ xs: 'column', md: 'row' }}
+                spacing={2}
+                sx={{ flexWrap: 'wrap', mb: 2 }}
+              >
+                {metadataChecklist.map((field) => (
+                  <Box
+                    key={field.label}
+                    sx={{
+                      border: '1px solid',
+                      borderColor: field.value ? 'success.light' : 'warning.light',
+                      borderRadius: 2,
+                      p: 1.5,
+                      minWidth: { xs: '100%', md: 220 },
+                    }}
+                  >
+                    <Typography variant="caption" color="textSecondary">
+                      {field.label}
+                    </Typography>
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Chip
+                        size="small"
+                        color={field.value ? 'success' : 'warning'}
+                        icon={field.value ? <CheckIcon fontSize="small" /> : <CloseIcon fontSize="small" />}
+                        label={field.value ? 'Documented' : 'Missing'}
+                      />
+                      <Typography variant="body2">
+                        {field.value || 'Not captured'}
+                      </Typography>
+                    </Stack>
+                  </Box>
+                ))}
+              </Stack>
+
+              <Grid container spacing={2}>
+                {documentationTextSections.map((section) => (
+                  <Grid item xs={12} md={6} key={section.label}>
+                    <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
+                      <Typography variant="subtitle2">{section.label}</Typography>
+                      <Chip
+                        size="small"
+                        color={section.value ? 'success' : 'warning'}
+                        label={section.value ? 'Documented' : 'Missing'}
+                      />
+                    </Stack>
+                    <Typography
+                      variant="body2"
+                      color="textSecondary"
+                      sx={{ whiteSpace: 'pre-line' }}
+                    >
+                      {section.value || 'Not documented'}
+                    </Typography>
+                  </Grid>
+                ))}
+              </Grid>
             </CardContent>
           </Card>
         </Grid>

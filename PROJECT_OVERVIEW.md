@@ -35,6 +35,8 @@ Provide IT team members with a **single application** to:
 2. **Identify discrepancies** between the two systems
 3. **Audit and document** Odoo security group permissions
 4. **Visualize inherited access rights** and CRUD permissions
+5. **Explain who holds which security roles** with the supporting business context (department, status, documentation)
+6. **Surface access risks** by flagging undocumented or inconsistent assignments so auditors can act quickly
 
 ---
 

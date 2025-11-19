@@ -28,8 +28,11 @@ import { api } from '../api/client'
 const panelStyle = {
   backgroundColor: '#fff',
   borderRadius: 3,
-  p: { xs: 2, md: 3 },
+  p: { xs: 2.5, md: 3.5, xl: 4 },
   boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)',
+  width: '100%',
+  maxWidth: '1600px',
+  mx: 'auto',
 }
 
 // Color constants

@@ -40,15 +40,26 @@ def ensure_additional_columns(db_engine: Engine):
         user_columns = inspector.get_columns("users") if inspector.has_table("users") else []
         security_column_names = {col["name"] for col in security_columns}
         user_column_names = {col["name"] for col in user_columns}
-        
-        if "is_archived" not in security_column_names:
-            conn.execute(text("ALTER TABLE security_groups ADD COLUMN is_archived BOOLEAN DEFAULT 0"))
-        if "source_system" not in security_column_names:
-            conn.execute(text("ALTER TABLE security_groups ADD COLUMN source_system VARCHAR(50)"))
-        if "odoo_id" not in security_column_names:
-            conn.execute(text("ALTER TABLE security_groups ADD COLUMN odoo_id INTEGER"))
-        if "synced_from_postgres_at" not in security_column_names:
-            conn.execute(text("ALTER TABLE security_groups ADD COLUMN synced_from_postgres_at DATETIME"))
+        # Columns added over time (older SQLite files may miss these)
+        security_columns_to_add = {
+            "allowed_functions": "TEXT",
+            "allowed_records": "TEXT",
+            "allowed_fields": "TEXT",
+            "inheritance_notes": "TEXT",
+            "odoo_created_by": "VARCHAR(255)",
+            "odoo_created_at": "DATETIME",
+            "odoo_updated_by": "VARCHAR(255)",
+            "odoo_updated_at": "DATETIME",
+            "is_archived": "BOOLEAN DEFAULT 0",
+            "source_system": "VARCHAR(50)",
+            "odoo_id": "INTEGER",
+            "synced_from_postgres_at": "DATETIME",
+        }
+        for column_name, column_def in security_columns_to_add.items():
+            if column_name not in security_column_names:
+                conn.execute(
+                    text(f"ALTER TABLE security_groups ADD COLUMN {column_name} {column_def}")
+                )
 
         if "department" not in user_column_names:
             conn.execute(text("ALTER TABLE users ADD COLUMN department VARCHAR(255)"))

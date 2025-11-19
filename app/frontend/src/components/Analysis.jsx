@@ -23,8 +23,11 @@ import { api } from '../api/client'
 const panelStyle = {
   backgroundColor: '#fff',
   borderRadius: 3,
-  p: { xs: 2, md: 3 },
+  p: { xs: 2.5, md: 3.5, xl: 4 },
   boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)',
+  width: '100%',
+  maxWidth: '1600px',
+  mx: 'auto',
 }
 
 function Analysis() {
@@ -149,7 +152,7 @@ function Analysis() {
                   <Grid item xs={12} sm={6} md={3}>
                     <Box>
                       <Typography variant="body2" color="textSecondary">
-                        Has Required Fields
+                        Odoo Doc Fields
                       </Typography>
                       <Typography variant="h5">
                         {compliance.has_required_fields}

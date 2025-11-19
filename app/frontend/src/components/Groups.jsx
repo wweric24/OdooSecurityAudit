@@ -30,11 +30,14 @@ import ConfigurableDataGrid from './common/ConfigurableDataGrid'
 const panelStyle = {
   backgroundColor: '#fff',
   borderRadius: 3,
-  p: { xs: 2, md: 3 },
+  p: { xs: 2.5, md: 3.5, xl: 4 },
   boxShadow: '0 10px 30px rgba(15, 23, 42, 0.08)',
+  width: '100%',
+  maxWidth: '1600px',
+  mx: 'auto',
 }
 
-const STATUS_OPTIONS = ['Under Review', 'Confirmed', 'Active', 'Deprecated', 'Legacy']
+const STATUS_OPTIONS = ['Active', 'Confirmed', 'Deprecated', 'Legacy']
 const BULK_FIELD_DEFAULTS = {
   status: false,
   who_requires: false,
@@ -43,7 +46,7 @@ const BULK_FIELD_DEFAULTS = {
   notes: false,
 }
 const BULK_VALUE_DEFAULTS = {
-  status: 'Under Review',
+  status: 'Active',
   who_requires: '',
   why_required: '',
   last_audit_date: '',
@@ -79,14 +82,20 @@ function Groups() {
         headerName: 'Group',
         flex: 1.3,
         renderCell: (params) => (
-          <Stack spacing={0}>
-            <Typography variant="body2" fontWeight={600}>
-              {params.value}
-            </Typography>
-            <Typography variant="caption" color="textSecondary">
-              {params.row.module || 'Unassigned Module'}
-            </Typography>
-          </Stack>
+          <Typography variant="body2" fontWeight={600}>
+            {params.value}
+          </Typography>
+        ),
+      },
+      {
+        field: 'module',
+        headerName: 'Application / Module',
+        flex: 1,
+        valueGetter: (value) => value || 'Unassigned Module',
+        renderCell: (params) => (
+          <Typography variant="body2" color="textSecondary">
+            {params.value || 'Unassigned Module'}
+          </Typography>
         ),
       },
       {
@@ -109,32 +118,6 @@ function Groups() {
               -
             </Typography>
           ),
-      },
-      {
-        field: 'access_level',
-        headerName: 'Access Level',
-        flex: 0.7,
-        valueGetter: (value) => value ?? '-',
-      },
-      {
-        field: 'status',
-        headerName: 'Status',
-        flex: 0.8,
-        renderCell: (params) => (
-          <Chip
-            label={params.value || 'Under Review'}
-            size="small"
-            color={
-              params.value === 'Confirmed'
-                ? 'success'
-                : params.value === 'Active'
-                ? 'info'
-                : params.value === 'Deprecated' || params.value === 'Legacy'
-                ? 'default'
-                : 'warning'
-            }
-          />
-        ),
       },
       {
         field: 'user_count',
@@ -467,6 +450,13 @@ function Groups() {
           height={640}
           checkboxSelection
           disableRowSelectionOnClick
+          initialState={{
+            columns: {
+              columnVisibilityModel: {
+                is_documented: false,
+              },
+            },
+          }}
           rowSelectionModel={selectedGroups}
           onRowSelectionModelChange={handleSelectionChange}
           onRowClick={(params) => {

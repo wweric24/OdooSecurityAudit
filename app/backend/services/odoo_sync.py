@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import psycopg
@@ -68,29 +68,57 @@ def _fetch_from_postgres() -> Dict:
                 category_map = {}
 
             cur.execute(
-                "SELECT id, name, category_id, write_date FROM res_groups ORDER BY id"
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'res_groups'"
+            )
+            res_group_columns = {row[0] for row in cur.fetchall()}
+            documentation_columns = []
+            for column in ("allowed_functions", "allowed_records", "allowed_fields", "inheritance_notes"):
+                if column in res_group_columns:
+                    documentation_columns.append(column)
+
+            group_select_columns = [
+                "id",
+                "name",
+                "category_id",
+                "write_date",
+                "create_date",
+                "create_uid",
+                "write_uid",
+            ] + documentation_columns
+
+            cur.execute(
+                f"SELECT {', '.join(group_select_columns)} FROM res_groups ORDER BY id"
             )
             groups = []
             for row in cur.fetchall():
-                # Handle translated fields - Odoo stores them as JSON/dict (e.g., {'en_US': 'Internal User'})
-                name = _normalize_translated_value(row[1])
+                row_map = {group_select_columns[idx]: row[idx] for idx in range(len(group_select_columns))}
+
+                name = _normalize_translated_value(row_map.get("name"))
                 if isinstance(name, str):
                     name = name.strip()
 
-                category_id = row[2]
+                category_id = row_map.get("category_id")
                 application = category_map.get(category_id)
                 if isinstance(application, str):
                     application = application.strip()
 
-                groups.append({
-                    "id": row[0],
+                group_record = {
+                    "id": row_map.get("id"),
                     "name": name,
                     "category_id": category_id,
                     "category_name": application,
                     "application": application,
                     "module_name": application,
-                    "write_date": row[3].isoformat() if row[3] else None,
-                })
+                    "odoo_updated_at": row_map.get("write_date"),
+                    "odoo_created_at": row_map.get("create_date"),
+                    "odoo_updated_by_id": row_map.get("write_uid"),
+                    "odoo_created_by_id": row_map.get("create_uid"),
+                }
+
+                for column in documentation_columns:
+                    group_record[column] = _normalize_translated_value(row_map.get(column))
+
+                groups.append(group_record)
 
             # Check if name column exists in res_users (some Odoo versions have it denormalized)
             # Note: We don't join with res_partner because the read-only user doesn't have access to it
@@ -133,6 +161,15 @@ def _fetch_from_postgres() -> Dict:
                     }
                     for row in cur.fetchall()
                 ]
+
+            user_name_lookup = {user["id"]: user["name"] for user in users if user.get("id")}
+            for record in groups:
+                created_by_id = record.pop("odoo_created_by_id", None)
+                updated_by_id = record.pop("odoo_updated_by_id", None)
+                if created_by_id:
+                    record["odoo_created_by"] = user_name_lookup.get(created_by_id)
+                if updated_by_id:
+                    record["odoo_updated_by"] = user_name_lookup.get(updated_by_id)
 
             # Discover column names for res_groups_users_rel (column names vary by Odoo version)
             # Common patterns: (gid, uid), (uid, gid), (user_id, group_id), (group_id, user_id)
@@ -304,7 +341,6 @@ def _upsert_groups(db: Session, payload: Dict) -> Dict[str, int]:
                         category=application_name,
                         access_level=access_level_value,
                         hierarchy_level=hierarchy_level_value,
-                        status="Under Review",
                     )
                     db.add(group)
                     db.flush()  # Flush to get the ID and catch any constraint violations early
@@ -337,6 +373,14 @@ def _upsert_groups(db: Session, payload: Dict) -> Dict[str, int]:
                 group.access_level = access_level_value
             if hierarchy_level_value is not None and group.hierarchy_level is None:
                 group.hierarchy_level = hierarchy_level_value
+            group.allowed_functions = record.get("allowed_functions")
+            group.allowed_records = record.get("allowed_records")
+            group.allowed_fields = record.get("allowed_fields")
+            group.inheritance_notes = record.get("inheritance_notes")
+            group.odoo_created_by = record.get("odoo_created_by")
+            group.odoo_created_at = record.get("odoo_created_at")
+            group.odoo_updated_by = record.get("odoo_updated_by")
+            group.odoo_updated_at = record.get("odoo_updated_at") or record.get("write_date")
             group_lookup[gid] = group
 
         # Process users
@@ -474,6 +518,13 @@ def _upsert_groups(db: Session, payload: Dict) -> Dict[str, int]:
                 existing.perm_create = ar_record.get("perm_create", False)
                 existing.perm_unlink = ar_record.get("perm_unlink", False)
                 existing.synced_at = now
+
+        for group in group_lookup.values():
+            group.refresh_documentation_status()
+            if group.last_audit_date:
+                group.is_overdue_audit = (date.today() - group.last_audit_date).days > 365
+            else:
+                group.is_overdue_audit = False
 
         # Single commit at the end
         db.commit()

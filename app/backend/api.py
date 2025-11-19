@@ -5,8 +5,8 @@ from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, field_validator, model_validator
-from sqlalchemy import func, or_
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, or_, case
+from sqlalchemy.orm import Session, joinedload, aliased
 from sqlalchemy.exc import IntegrityError
 from typing import Dict, List, Optional
 import csv
@@ -155,7 +155,7 @@ def reset_azure_directory(db: Session) -> Dict[str, int]:
 
 
 def reset_odoo_dataset(db: Session) -> Dict[str, int]:
-    """Delete Odoo-sourced security groups and access rights."""
+    """Delete Odoo-sourced security groups, access rights, and shadow Odoo users."""
     odoo_group_ids = [
         group_id
         for (group_id,) in db.query(SecurityGroup.id)
@@ -167,45 +167,82 @@ def reset_odoo_dataset(db: Session) -> Dict[str, int]:
         )
         .all()
     ]
+    odoo_user_ids = [
+        user_id
+        for (user_id,) in db.query(User.id)
+        .filter(
+            or_(
+                User.source_system.ilike("Odoo%"),
+                User.odoo_user_id.isnot(None),
+            )
+        )
+        .all()
+    ]
 
-    if not odoo_group_ids:
+    if not odoo_group_ids and not odoo_user_ids:
         return {
             "deleted_groups": 0,
             "deleted_memberships": 0,
             "deleted_access_rights": 0,
+            "deleted_users": 0,
         }
 
-    deleted_memberships = (
-        db.execute(
-            user_group_association.delete().where(
-                user_group_association.c.group_id.in_(odoo_group_ids)
-            )
-        ).rowcount
-        or 0
-    )
-    deleted_access_rights = (
-        db.query(AccessRight)
-        .filter(AccessRight.group_id.in_(odoo_group_ids))
-        .delete(synchronize_session=False)
-    )
-    deleted_groups = (
-        db.query(SecurityGroup)
-        .filter(SecurityGroup.id.in_(odoo_group_ids))
-        .delete(synchronize_session=False)
-    )
+    membership_conditions = []
+    if odoo_group_ids:
+        membership_conditions.append(
+            user_group_association.c.group_id.in_(odoo_group_ids)
+        )
+    if odoo_user_ids:
+        membership_conditions.append(
+            user_group_association.c.user_id.in_(odoo_user_ids)
+        )
+
+    deleted_memberships = 0
+    if membership_conditions:
+        deleted_memberships = (
+            db.execute(
+                user_group_association.delete().where(or_(*membership_conditions))
+            ).rowcount
+            or 0
+        )
+
+    deleted_access_rights = 0
+    if odoo_group_ids:
+        deleted_access_rights = (
+            db.query(AccessRight)
+            .filter(AccessRight.group_id.in_(odoo_group_ids))
+            .delete(synchronize_session=False)
+        )
+
+    deleted_groups = 0
+    if odoo_group_ids:
+        deleted_groups = (
+            db.query(SecurityGroup)
+            .filter(SecurityGroup.id.in_(odoo_group_ids))
+            .delete(synchronize_session=False)
+        )
+
+    deleted_users = 0
+    if odoo_user_ids:
+        deleted_users = (
+            db.query(User)
+            .filter(User.id.in_(odoo_user_ids))
+            .delete(synchronize_session=False)
+        )
+
     db.commit()
 
     return {
         "deleted_groups": deleted_groups,
         "deleted_memberships": deleted_memberships,
         "deleted_access_rights": deleted_access_rights,
+        "deleted_users": deleted_users,
     }
 
 
 def refresh_group_compliance_flags(group: SecurityGroup) -> None:
     """Recalculate documentation/compliance helper fields."""
-    group.has_required_fields = bool(group.who_requires and group.why_required)
-    group.is_documented = bool(group.who_requires and group.why_required)
+    group.refresh_documentation_status()
     if group.last_audit_date:
         group.is_overdue_audit = (date.today() - group.last_audit_date).days > 365
     else:
@@ -225,6 +262,10 @@ def serialize_group(group: SecurityGroup) -> dict:
         "status": group.status,
         "user_access": group.user_access,
         "user_access_html": group.user_access_html,
+        "allowed_functions": group.allowed_functions,
+        "allowed_records": group.allowed_records,
+        "allowed_fields": group.allowed_fields,
+        "inheritance_notes": group.inheritance_notes,
         "permissions": group.permissions,
         "who_requires": group.who_requires,
         "why_required": group.why_required,
@@ -234,6 +275,10 @@ def serialize_group(group: SecurityGroup) -> dict:
         "is_documented": group.is_documented,
         "is_overdue_audit": group.is_overdue_audit,
         "is_archived": group.is_archived,
+        "odoo_created_by": group.odoo_created_by,
+        "odoo_created_at": group.odoo_created_at.isoformat() if group.odoo_created_at else None,
+        "odoo_updated_by": group.odoo_updated_by,
+        "odoo_updated_at": group.odoo_updated_at.isoformat() if group.odoo_updated_at else None,
         "source_system": group.source_system,
         "odoo_id": group.odoo_id,
         "synced_from_postgres_at": group.synced_from_postgres_at.isoformat() if group.synced_from_postgres_at else None,
@@ -330,7 +375,7 @@ async def import_csv(
                     group.purpose_html = group_data.get('purpose_html')
                     update_fields = True
                 if group_data.get('status') is not None:
-                    group.status = group_data.get('status', 'Under Review')
+                    group.status = group_data.get('status')
                     update_fields = True
                 if group_data.get('user_access') is not None:
                     group.user_access = group_data.get('user_access')
@@ -340,6 +385,30 @@ async def import_csv(
                     update_fields = True
                 if group_data.get('follows_naming_convention') is not None:
                     group.follows_naming_convention = group_data.get('follows_naming_convention', False)
+                    update_fields = True
+                if group_data.get('allowed_functions') is not None:
+                    group.allowed_functions = group_data.get('allowed_functions')
+                    update_fields = True
+                if group_data.get('allowed_records') is not None:
+                    group.allowed_records = group_data.get('allowed_records')
+                    update_fields = True
+                if group_data.get('allowed_fields') is not None:
+                    group.allowed_fields = group_data.get('allowed_fields')
+                    update_fields = True
+                if group_data.get('inheritance_notes') is not None:
+                    group.inheritance_notes = group_data.get('inheritance_notes')
+                    update_fields = True
+                if group_data.get('odoo_created_by') is not None:
+                    group.odoo_created_by = group_data.get('odoo_created_by')
+                    update_fields = True
+                if group_data.get('odoo_created_at') is not None:
+                    group.odoo_created_at = group_data.get('odoo_created_at')
+                    update_fields = True
+                if group_data.get('odoo_updated_by') is not None:
+                    group.odoo_updated_by = group_data.get('odoo_updated_by')
+                    update_fields = True
+                if group_data.get('odoo_updated_at') is not None:
+                    group.odoo_updated_at = group_data.get('odoo_updated_at')
                     update_fields = True
                 group.import_history_id = import_history.id
                 if update_fields:
@@ -355,10 +424,18 @@ async def import_csv(
                         hierarchy_level=group_data.get('hierarchy_level'),
                         purpose=group_data.get('purpose'),
                         purpose_html=group_data.get('purpose_html'),
-                        status=group_data.get('status', 'Under Review'),
+                        status=group_data.get('status'),
                         user_access=group_data.get('user_access'),
                         user_access_html=group_data.get('user_access_html'),
                         follows_naming_convention=group_data.get('follows_naming_convention', False),
+                        allowed_functions=group_data.get('allowed_functions'),
+                        allowed_records=group_data.get('allowed_records'),
+                        allowed_fields=group_data.get('allowed_fields'),
+                        inheritance_notes=group_data.get('inheritance_notes'),
+                        odoo_created_by=group_data.get('odoo_created_by'),
+                        odoo_created_at=group_data.get('odoo_created_at'),
+                        odoo_updated_by=group_data.get('odoo_updated_by'),
+                        odoo_updated_at=group_data.get('odoo_updated_at'),
                         import_history_id=import_history.id
                     )
                     db.add(group)
@@ -389,13 +466,29 @@ async def import_csv(
                         if group_data.get('purpose_html') is not None:
                             group.purpose_html = group_data.get('purpose_html')
                         if group_data.get('status') is not None:
-                            group.status = group_data.get('status', 'Under Review')
+                            group.status = group_data.get('status')
                         if group_data.get('user_access') is not None:
                             group.user_access = group_data.get('user_access')
                         if group_data.get('user_access_html') is not None:
                             group.user_access_html = group_data.get('user_access_html')
                         if group_data.get('follows_naming_convention') is not None:
                             group.follows_naming_convention = group_data.get('follows_naming_convention', False)
+                        if group_data.get('allowed_functions') is not None:
+                            group.allowed_functions = group_data.get('allowed_functions')
+                        if group_data.get('allowed_records') is not None:
+                            group.allowed_records = group_data.get('allowed_records')
+                        if group_data.get('allowed_fields') is not None:
+                            group.allowed_fields = group_data.get('allowed_fields')
+                        if group_data.get('inheritance_notes') is not None:
+                            group.inheritance_notes = group_data.get('inheritance_notes')
+                        if group_data.get('odoo_created_by') is not None:
+                            group.odoo_created_by = group_data.get('odoo_created_by')
+                        if group_data.get('odoo_created_at') is not None:
+                            group.odoo_created_at = group_data.get('odoo_created_at')
+                        if group_data.get('odoo_updated_by') is not None:
+                            group.odoo_updated_by = group_data.get('odoo_updated_by')
+                        if group_data.get('odoo_updated_at') is not None:
+                            group.odoo_updated_at = group_data.get('odoo_updated_at')
                         group.import_history_id = import_history.id
                         groups_updated += 1
                     else:
@@ -430,6 +523,8 @@ async def import_csv(
             if group_data.get('inherits'):
                 # This would need more sophisticated parsing
                 pass
+
+            refresh_group_compliance_flags(group)
         
         db.commit()
         
@@ -1062,41 +1157,73 @@ async def preview_odoo_deletion(db: Session = Depends(get_db)):
         )
         .all()
     ]
-    
-    if not odoo_group_ids:
+    odoo_user_ids = [
+        user_id
+        for (user_id,) in db.query(User.id)
+        .filter(
+            or_(
+                User.source_system.ilike("Odoo%"),
+                User.odoo_user_id.isnot(None),
+            )
+        )
+        .all()
+    ]
+
+    total_groups = db.query(SecurityGroup).count()
+    total_users = db.query(User).count()
+    total_odoo_groups = len(odoo_group_ids)
+    total_odoo_users = len(odoo_user_ids)
+
+    if not odoo_group_ids and not odoo_user_ids:
         return {
             "will_delete_groups": 0,
             "will_delete_memberships": 0,
             "will_delete_access_rights": 0,
-            "total_groups": db.query(SecurityGroup).count(),
+            "will_delete_users": 0,
+            "total_groups": total_groups,
             "total_odoo_groups": 0,
+            "total_users": total_users,
+            "total_odoo_users": 0,
+            "will_remain_groups": total_groups,
+            "will_remain_users": total_users,
         }
-    
-    will_delete_memberships = (
-        db.execute(
-            user_group_association.select().where(
-                user_group_association.c.group_id.in_(odoo_group_ids)
-            )
-        ).fetchall()
-    )
-    will_delete_memberships = len(will_delete_memberships) if will_delete_memberships else 0
-    
+
+    membership_conditions = []
+    if odoo_group_ids:
+        membership_conditions.append(
+            user_group_association.c.group_id.in_(odoo_group_ids)
+        )
+    if odoo_user_ids:
+        membership_conditions.append(
+            user_group_association.c.user_id.in_(odoo_user_ids)
+        )
+
+    will_delete_memberships = 0
+    if membership_conditions:
+        membership_rows = (
+            db.execute(
+                user_group_association.select().where(or_(*membership_conditions))
+            ).fetchall()
+        )
+        will_delete_memberships = len(membership_rows) if membership_rows else 0
+
     will_delete_access_rights = (
-        db.query(AccessRight)
-        .filter(AccessRight.group_id.in_(odoo_group_ids))
-        .count()
+        db.query(AccessRight).filter(AccessRight.group_id.in_(odoo_group_ids)).count()
+        if odoo_group_ids
+        else 0
     )
-    
-    total_groups = db.query(SecurityGroup).count()
-    total_odoo_groups = len(odoo_group_ids)
-    
+
     return {
         "will_delete_groups": total_odoo_groups,
         "will_delete_memberships": will_delete_memberships,
         "will_delete_access_rights": will_delete_access_rights,
+        "will_delete_users": total_odoo_users,
         "total_groups": total_groups,
         "total_odoo_groups": total_odoo_groups,
+        "total_users": total_users,
+        "total_odoo_users": total_odoo_users,
         "will_remain_groups": total_groups - total_odoo_groups,
+        "will_remain_users": total_users - total_odoo_users,
     }
 
 
@@ -1135,12 +1262,6 @@ async def get_statistics(
         or 0
     )
     undocumented = total_groups - documented
-    under_review = (
-        db.query(func.count(SecurityGroup.id))
-        .filter(SecurityGroup.status.ilike("%under review%"))
-        .scalar()
-        or 0
-    )
     confirmed = (
         db.query(func.count(SecurityGroup.id))
         .filter(SecurityGroup.status.ilike("%confirm%"))
@@ -1205,15 +1326,165 @@ async def get_statistics(
         .all()
     )
 
+    module_summary_rows = (
+        db.query(
+            SecurityGroup.module,
+            func.count(user_group_association.c.user_id).label("user_count"),
+        )
+        .join(user_group_association, user_group_association.c.group_id == SecurityGroup.id)
+        .filter(SecurityGroup.module.isnot(None), SecurityGroup.module != "")
+        .group_by(SecurityGroup.module)
+        .order_by(func.count(user_group_association.c.user_id).desc())
+        .limit(10)
+        .all()
+    )
+
+    status_breakdown_rows = (
+        db.query(SecurityGroup.status, func.count(SecurityGroup.id).label("count"))
+        .group_by(SecurityGroup.status)
+        .order_by(func.count(SecurityGroup.id).desc())
+        .all()
+    )
+
+    total_memberships = (
+        db.query(func.count(user_group_association.c.user_id))
+        .select_from(user_group_association)
+        .scalar()
+        or 0
+    )
+
+    avg_groups_per_user = round((total_memberships / total_users), 2) if total_users else 0
+
+    undocumented_memberships = (
+        db.query(func.count(user_group_association.c.user_id))
+        .select_from(user_group_association)
+        .join(SecurityGroup, SecurityGroup.id == user_group_association.c.group_id)
+        .filter(SecurityGroup.is_documented.is_(False))
+        .scalar()
+        or 0
+    )
+
+    users_with_undocumented_groups = (
+        db.query(func.count(func.distinct(user_group_association.c.user_id)))
+        .select_from(user_group_association)
+        .join(SecurityGroup, SecurityGroup.id == user_group_association.c.group_id)
+        .filter(SecurityGroup.is_documented.is_(False))
+        .scalar()
+        or 0
+    )
+
+    active_undocumented_groups = (
+        db.query(func.count(func.distinct(SecurityGroup.id)))
+        .select_from(SecurityGroup)
+        .join(user_group_association, user_group_association.c.group_id == SecurityGroup.id)
+        .filter(SecurityGroup.is_documented.is_(False))
+        .scalar()
+        or 0
+    )
+
+    heavy_user_threshold = (
+        int(max(12, round(avg_groups_per_user * 1.5))) if total_users else 12
+    )
+
+    user_risk_rows = (
+        db.query(
+            User.id,
+            User.name,
+            User.email,
+            User.department,
+            func.count(user_group_association.c.group_id).label("group_count"),
+            func.sum(
+                case((SecurityGroup.is_documented.is_(False), 1), else_=0)
+            ).label("undocumented_assignments"),
+        )
+        .join(user_group_association, user_group_association.c.user_id == User.id)
+        .join(SecurityGroup, SecurityGroup.id == user_group_association.c.group_id)
+        .group_by(User.id, User.name, User.email, User.department)
+        .order_by(func.count(user_group_association.c.group_id).desc())
+        .limit(8)
+        .all()
+    )
+
+    group_risk_rows = (
+        db.query(
+            SecurityGroup.id,
+            SecurityGroup.name,
+            SecurityGroup.module,
+            SecurityGroup.status,
+            SecurityGroup.is_documented,
+            func.count(user_group_association.c.user_id).label("user_count"),
+        )
+        .outerjoin(
+            user_group_association, SecurityGroup.id == user_group_association.c.group_id
+        )
+        .group_by(
+            SecurityGroup.id,
+            SecurityGroup.name,
+            SecurityGroup.module,
+            SecurityGroup.status,
+            SecurityGroup.is_documented,
+        )
+        .order_by(func.count(user_group_association.c.user_id).desc())
+        .limit(8)
+        .all()
+    )
+
+    parent_alias = aliased(SecurityGroup)
+    child_alias = aliased(SecurityGroup)
+    inheritance_relations = (
+        db.query(
+            group_inheritance.c.parent_id,
+            parent_alias.name.label("parent_name"),
+            parent_alias.module.label("parent_module"),
+            group_inheritance.c.child_id,
+            child_alias.name.label("child_name"),
+            child_alias.module.label("child_module"),
+        )
+        .join(parent_alias, parent_alias.id == group_inheritance.c.parent_id)
+        .join(child_alias, child_alias.id == group_inheritance.c.child_id)
+        .limit(75)
+        .all()
+    )
+
+    inheritance_nodes = {}
+    inheritance_edges = []
+    for relation in inheritance_relations:
+        if relation.parent_id not in inheritance_nodes:
+            inheritance_nodes[relation.parent_id] = {
+                "id": relation.parent_id,
+                "name": relation.parent_name,
+                "module": relation.parent_module,
+                "role": "parent",
+            }
+        if relation.child_id not in inheritance_nodes:
+            inheritance_nodes[relation.child_id] = {
+                "id": relation.child_id,
+                "name": relation.child_name,
+                "module": relation.child_module,
+                "role": "child",
+            }
+        inheritance_edges.append(
+            {
+                "id": f"{relation.parent_id}-{relation.child_id}",
+                "source": relation.parent_id,
+                "target": relation.child_id,
+            }
+        )
+
     return {
         "total_groups": total_groups,
         "total_users": total_users,
+        "total_memberships": total_memberships,
+        "avg_groups_per_user": avg_groups_per_user,
         "documented_groups": documented,
         "undocumented_groups": undocumented,
-        "under_review": under_review,
         "confirmed": confirmed,
         "follows_naming_convention": follows_naming,
         "compliance_percentage": round((follows_naming / total_groups * 100) if total_groups > 0 else 0, 2),
+        "undocumented_memberships": undocumented_memberships,
+        "users_with_undocumented_groups": users_with_undocumented_groups,
+        "active_undocumented_groups": active_undocumented_groups,
+        "heavy_user_threshold": heavy_user_threshold,
         "groups_without_users": orphaned_count,
         "orphaned_group_samples": [
             {"id": group_id, "name": name} for group_id, name in orphaned_samples
@@ -1234,6 +1505,41 @@ async def get_statistics(
             }
             for dept, group_name, user_count in department_group_rows
         ],
+        "module_summary": [
+            {"module": module, "user_count": user_count}
+            for module, user_count in module_summary_rows
+        ],
+        "status_breakdown": [
+            {"status": status or "Unspecified", "count": count}
+            for status, count in status_breakdown_rows
+        ],
+        "user_risk_summary": [
+            {
+                "id": row.id,
+                "name": row.name,
+                "email": row.email,
+                "department": row.department,
+                "group_count": int(row.group_count or 0),
+                "undocumented_assignments": int(row.undocumented_assignments or 0),
+                "is_over_threshold": bool((row.group_count or 0) >= heavy_user_threshold),
+            }
+            for row in user_risk_rows
+        ],
+        "group_risk_summary": [
+            {
+                "id": row.id,
+                "name": row.name,
+                "module": row.module,
+                "status": row.status,
+                "is_documented": row.is_documented,
+                "user_count": int(row.user_count or 0),
+            }
+            for row in group_risk_rows
+        ],
+        "inheritance_graph": {
+            "nodes": list(inheritance_nodes.values()),
+            "edges": inheritance_edges,
+        },
     }
 
 

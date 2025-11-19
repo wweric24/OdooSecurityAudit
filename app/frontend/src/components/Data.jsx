@@ -408,10 +408,12 @@ function Data() {
     setSyncError(null)
     try {
       const response = await api.deleteOdooData()
-      const deleted = response.data.deleted_groups || 0
-      const remaining = (odooDeletePreview?.will_remain_groups || 0)
+      const deletedGroups = response.data.deleted_groups || 0
+      const deletedUsers = response.data.deleted_users || 0
+      const remainingGroups = odooDeletePreview?.will_remain_groups ?? 0
+      const remainingUsers = odooDeletePreview?.will_remain_users ?? 0
       setSyncMessage(
-        `Odoo data deleted: ${deleted} groups removed. ${remaining} groups remain (from other sources or manually created).`
+        `Odoo data deleted: ${deletedGroups} groups and ${deletedUsers} users removed. ${remainingGroups} groups and ${remainingUsers} users remain (from other sources or manually created).`
       )
       await loadSyncStatus()
       setOdooDeletePreview(null)
@@ -1115,7 +1117,7 @@ function Data() {
         <DialogTitle>Confirm Delete Odoo Data</DialogTitle>
         <DialogContent>
           <DialogContentText sx={{ mb: 2 }}>
-            This will permanently delete all groups synced from Odoo Postgres. This action cannot be undone.
+            This will permanently delete all groups and users synced from Odoo Postgres. This action cannot be undone.
           </DialogContentText>
           {odooDeletePreview && (
             <Box>
@@ -1125,6 +1127,9 @@ function Data() {
                 </Typography>
                 <Typography variant="body2">
                   • {odooDeletePreview.will_delete_groups} groups (with Odoo ID or source_system like "Odoo%")
+                </Typography>
+                <Typography variant="body2">
+                  • {odooDeletePreview.will_delete_users} users (with odoo_user_id or source_system like "Odoo%")
                 </Typography>
                 <Typography variant="body2">
                   • {odooDeletePreview.will_delete_memberships} group memberships
@@ -1138,9 +1143,12 @@ function Data() {
                 <Typography variant="body2">
                   • {odooDeletePreview.will_remain_groups} groups from other sources (Azure, CSV import, or manually created)
                 </Typography>
+                <Typography variant="body2">
+                  • {odooDeletePreview.will_remain_users} users from other sources (Azure, CSV import, or manually created)
+                </Typography>
               </Alert>
               <Typography variant="caption" color="textSecondary">
-                Note: Only groups explicitly marked as Odoo-sourced will be deleted. Groups without odoo_id or with a different source_system will remain.
+                Note: Only records explicitly marked as Odoo-sourced will be deleted. Groups/users without odoo_id or with a different source_system will remain.
               </Typography>
             </Box>
           )}

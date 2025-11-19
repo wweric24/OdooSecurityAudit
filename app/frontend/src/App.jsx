@@ -47,6 +47,11 @@ const tabs = [
 function AppLayout() {
   const location = useLocation()
   const [currentTab, setCurrentTab] = useState(0)
+  const contentContainerSx = {
+    width: '100%',
+    maxWidth: '1600px',
+    px: { xs: 2, sm: 3, lg: 4, xl: 6 },
+  }
 
   useEffect(() => {
     const matchIndex = tabs.findIndex((tab) =>
@@ -68,7 +73,7 @@ function AppLayout() {
       </AppBar>
       
       <Box sx={{ borderBottom: 1, borderColor: 'divider', backgroundColor: '#fff' }}>
-        <Container>
+        <Container maxWidth={false} sx={contentContainerSx}>
           <Tabs value={currentTab} onChange={(event, value) => setCurrentTab(value)}>
             {tabs.map((tab) => (
               <Tab key={tab.path} label={tab.label} component={Link} to={tab.path} />
@@ -77,7 +82,10 @@ function AppLayout() {
         </Container>
       </Box>
 
-      <Container sx={{ flexGrow: 1, py: 3 }}>
+      <Container
+        maxWidth={false}
+        sx={{ flexGrow: 1, py: { xs: 2, md: 4 }, ...contentContainerSx }}
+      >
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/groups" element={<Groups />} />
